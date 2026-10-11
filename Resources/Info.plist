@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleName</key><string>ClairClass</string>
+<key>CFBundleDisplayName</key><string>法语听课助手</string>
+<key>CFBundleIdentifier</key><string>local.clairclass.mac</string>
+<key>CFBundleExecutable</key><string>ClairClass</string>
+<key>CFBundleIconFile</key><string>ClairClass</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleShortVersionString</key><string>0.3.0</string>
+<key>CFBundleVersion</key><string>3</string>
+<key>LSMinimumSystemVersion</key><string>26.0</string>
+<key>NSHighResolutionCapable</key><true/>
+<key>NSMicrophoneUsageDescription</key><string>收录你选择的课堂声音，用 Apple 本地语音模型转写法语。音频不上传。</string>
+<key>NSSpeechRecognitionUsageDescription</key><string>在这台 Mac 上实时识别法语课堂语音。</string>
+<key>NSScreenCaptureUsageDescription</key><string>转写你正在播放的网课或视频声音。只处理系统音频，不保存屏幕画面。</string>
+<key>NSAudioCaptureUsageDescription</key><string>读取网课或视频的系统声音，以生成法语原文和中文字幕。</string>
+<key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
+<key>NSHumanReadableCopyright</key><string>Copyright © 2026 steinyanaa. MIT License.</string>
+<key>LSApplicationCategoryType</key><string>public.app-category.education</string>
+</dict></plist>
