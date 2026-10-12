@@ -9,6 +9,7 @@ struct TestMain {
     static func main() async {
         do {
             let arguments = CommandLine.arguments
+            if arguments.contains("--lookup") { try await LookupEvaluation.run(); return }
             if arguments.contains("--fallback") {
                 let service = TranslationService()
                 let result = try await service.translate("Bonjour. Le cours commence à neuf heures.")
@@ -215,6 +216,55 @@ struct TestMain {
             garbled.uncertainWords = ["étoiles", "ménage", "train", "loin"]
             try check(TranscriptRules.isDoubtful(garbled))
             printJSON(["sentenceRepair": "passed", "fillerCleanup": "passed", "continuationMerge": "passed", "uncertainMarks": "passed"])
+            // Word lookup: elisions are stripped, verbs get their base form, sentence-like answers are rejected.
+            try check(WordLookup.clean("l’augmentation") == "augmentation" && WordLookup.clean("qu'ils") == "ils" && WordLookup.clean("d’intérêt,") == "intérêt")
+            try check(WordLookup.clean("en revanche") == "en revanche" && WordLookup.clean("Deux.") == "Deux" && WordLookup.clean("l'") == "l")
+            try check(WordLookup.lemma(of: "allons", in: "Nous allons étudier la croissance.", range: NSRange(location: 5, length: 6)) == "aller", "Conjugated verb lemma")
+            try check(WordLookup.lemma(of: "croissance", in: "Nous allons étudier la croissance.", range: NSRange(location: 23, length: 10)) == nil, "Base form is not repeated")
+            try check(WordLookup.looksLikeSentence("今天，我们将研究经济增长", source: "allons") && WordLookup.looksLikeSentence("仅仅一个假设是不够的。", source: "ne suffit pas"))
+            try check(!WordLookup.looksLikeSentence("投资", source: "investissements") && !WordLookup.looksLikeSentence("不足以", source: "ne suffit pas"))
+            let lookupPrompt = LocalModel.lookupPrompt("base", sentence: "On ajoute une base forte.", range: NSRange(location: 14, length: 4), preset: ClassPreset(subject: .science))
+            try check(lookupPrompt.contains("«On ajoute une [base] forte.»") && lookupPrompt.hasSuffix("Translate only: base") && lookupPrompt.contains("mathematics"))
+            let repeated = "Les faits sont vérifiables, les calculs sont faits à la main."
+            let firstFact = (repeated as NSString).range(of: "faits")
+            let lastFact = (repeated as NSString).range(of: "faits", options: .backwards)
+            try check(WordLookup.lemma(of: "faits", in: repeated, range: firstFact) == "fait")
+            try check(WordLookup.lemma(of: "faits", in: repeated, range: lastFact) == "faire")
+            let repeatedPrompt = LocalModel.lookupPrompt("faits", sentence: repeated, range: lastFact, preset: ClassPreset())
+            try check(repeatedPrompt.contains("Les faits sont vérifiables, les calculs sont [faits]"))
+            let elided = "🧪 Le taux d’intérêt et l’intérêt."
+            let elidedRange = (elided as NSString).range(of: "l’intérêt")
+            let selected = WordLookup.selection(in: elided, range: elidedRange)!
+            try check(selected.phrase == "intérêt" && selected.range.location == elidedRange.location + 2)
+            try check((elided as NSString).substring(with: selected.range) == "intérêt")
+            try check(WordLookup.selection(in: elided, range: NSRange(location: 1, length: 1)) == nil, "Reject split surrogate")
+            try check(WordLookup.selection(in: elided, range: NSRange(location: NSNotFound, length: 0)) == nil)
+            try check(WordLookup.lemma(of: "faits", in: repeated, range: NSRange(location: 0, length: 5)) == nil)
+            try check(WordLookup.commonUsage("en", lexicalClass: nil)?.contains("代词") == true)
+            try check(WordLookup.commonUsage("pas", lexicalClass: "Noun") == nil)
+            try check(WordLookup.needsPlainOnly("me", lexicalClass: "Pronoun") && !WordLookup.needsPlainOnly("en revanche", lexicalClass: nil))
+            try check(!WordLookup.acceptsContext("复数域", plain: "域", source: "corps"))
+            try check(WordLookup.acceptsContext("力矩", plain: "时刻", source: "moment"))
+            try check(WordLookup.acceptsContext("加速度", plain: "加速", source: "accélération"))
+            let positionController = ClassController(workspace: WorkspaceConfiguration(projectRoot: mergeRoot.path))
+            positionController.session.preset = ClassPreset(glossary: "faits = 事实")
+            let factMeaning = try await positionController.lookUp("faits", lemma: "fait", in: repeated, range: firstFact)
+            positionController.session.preset = ClassPreset(glossary: "faits = 完成")
+            let madeMeaning = try await positionController.lookUp("faits", lemma: "faire", in: repeated, range: lastFact)
+            let changedMeaning = try await positionController.lookUp("faits", lemma: "fait", in: repeated, range: firstFact)
+            try check(factMeaning.glossary == "事实" && madeMeaning.glossary == "完成" && changedMeaning.glossary == "完成")
+            try check(positionController.lookupCache.count == 3, "Cache distinguishes occurrence, lemma and preset")
+            let grammarMeaning = try await positionController.lookUp("en", lemma: nil, in: "en janvier", range: NSRange(location: 0, length: 2))
+            try check(grammarMeaning.isGrammar && grammarMeaning.inSentence == nil && grammarMeaning.backend == "内置法语用法")
+            positionController.shutdown()
+            // A saved class is continued, not replaced, by the start action.
+            let resumable = ClassController(workspace: WorkspaceConfiguration(projectRoot: mergeRoot.path))
+            resumable.newSession()
+            try check(resumable.startTitle == "开始听课")
+            resumable.session.lines = [TranscriptLine(id: "r", start: 0, french: "Bonjour.", chinese: "你好。", isFinal: true)]
+            try check(resumable.startTitle == "继续听课", "A class with captions offers to continue")
+            resumable.shutdown()
+            printJSON(["wordLookup": "passed", "continueClass": "passed"])
             // Presets and context: the plain prompt is unchanged; context goes in separate blocks.
             let plain = LocalModel.prompt("Bonjour.")
             try check(plain.hasSuffix("Please translate the following French text into Chinese:\n\n\nBonjour.") && !plain.contains("Previous sentences"))

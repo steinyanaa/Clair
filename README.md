@@ -14,9 +14,10 @@ Clair (法语听课助手, formerly ClairClass) listens to a lecture — from th
 - **Class presets and context** – tell Clair what the class is about (literature, maths and science, economics, law…), add your own term list, and each sentence is translated with the subject and the previous sentences in mind.
 - **Whole-sentence translation** – when the speaker pauses mid-sentence the halves are joined before translating; fillers such as *euh* and stutters are left out of the translation input.
 - **Honest output** – lines that fell back to the system translator are labelled and re-translated with Gemma once the class is paused or over; words the recogniser was unsure of are underlined so you know what to check.
+- **Word lookup** – click a French word for its base form and meaning, or select a phrase to translate it. Lookup follows the selected occurrence; common function words show built-in usage notes, verbs use their independent dictionary form, and other words can show a filtered contextual sense. Runs on-device, with your classroom terms taking priority.
 - **Class assistant** – organised notes, minutes, glossaries (rendered as tables) and Q&A grounded in the transcript, with timestamp citations; export as Markdown.
 - **Library** – projects, multi-selection with batch move / delete, Recently Deleted with restore or permanent deletion (always confirmed).
-- **Native macOS 26 design** – sidebar / list / detail layout, Liquid Glass capture controls, ⌘K command palette, full menu bar and keyboard shortcuts, light and dark appearance.
+- **Quiet, native macOS 26 design** – warm paper palette with one clay accent, serif headings, sidebar / list / detail layout, a centred new-class composer and a floating capture dock, ⌘K command palette, full menu bar and keyboard shortcuts, light and dark appearance.
 - **Local models, managed in Settings** – download TranslateGemma 4B/12B and Gemma 3 4B/12B from the official Ollama registry with SHA-256 verification; the bundled model service is restarted automatically if it stops.
 
 | Class assistant (dark) | Batch selection in Recently Deleted |
@@ -50,9 +51,10 @@ scripts/test.sh                          # unit tests (no models needed)
 scripts/make-sample-audio.sh             # synthesise the public French test lecture
 scripts/test.sh --pipeline .build/french-sample.aiff --realtime   # end to end, needs the app's model service running
 scripts/test.sh --study                  # class assistant, needs the assistant model
+scripts/test.sh --lookup -ClairClassDataRoot /tmp/ClairLookup   # lookup evaluation, needs a separate service on 11449
 ```
 
-Measured results and known limits are in [docs/TESTING.md](docs/TESTING.md).
+Measured results and known limits are in [docs/TESTING.md](docs/TESTING.md) and the [0.5.1 changelog](CHANGELOG.md). The lookup evaluation also supports `--baseline` and `--marked` for comparisons.
 
 ## Privacy
 

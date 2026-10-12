@@ -18,6 +18,7 @@ private struct GeneralSettings: View {
     @Bindable var controller: ClassController
     @AppStorage("appearance") private var appearance = AppearancePreference.system.rawValue
     @AppStorage("followsLatest") private var followsLatest = true
+    @AppStorage("wordLookup") private var wordLookup = true
 
     var body: some View {
         Form {
@@ -34,6 +35,10 @@ private struct GeneralSettings: View {
                     Text("用橙色虚线标出识别把握较低的实词，供对照原声核对。").font(.caption).foregroundStyle(.secondary)
                 }
                 Toggle("自动跟随最新字幕", isOn: $followsLatest)
+                Toggle(isOn: $wordLookup) {
+                    Text("点按法语单词查词义")
+                    Text("点一个词看原形、释义和在这句里的意思；拖选几个词看这段的译文。用本地翻译模型，不联网。").font(.caption).foregroundStyle(.secondary)
+                }
             }
             Section {
                 Picker("默认音源", selection: $controller.source) {

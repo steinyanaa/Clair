@@ -5,6 +5,7 @@
 #   scripts/build.sh --compile-only  type-check and compile the sources only (CI)
 set -eu
 root="${0:A:h:h}"
+source "$root/scripts/trash.sh"
 build="$root/.build"
 app="$root/dist/Clair.app"
 mkdir -p "$build"
@@ -14,6 +15,10 @@ if [[ "${1:-}" == "--compile-only" ]]; then
     "$root"/Sources/*.swift -o "$build/Clair"
   print -r -- "Compiled $build/Clair"
   exit 0
+fi
+if pgrep -x Clair > /dev/null; then
+  print -u2 "Clair is running. Quit it before replacing or signing dist/Clair.app."
+  exit 1
 fi
 if [[ ! -x "$root/runtime/ollama" ]]; then
   print -u2 "Missing Ollama runtime. Run scripts/fetch-runtime.sh first."
@@ -27,7 +32,8 @@ cp "$root/Resources/Info.plist" "$app/Contents/Info.plist"
 # The app icon is built from the 1024 px master in Resources/AppIcon.png.
 if [[ ! -f "$build/Clair.icns" || "$root/Resources/AppIcon.png" -nt "$build/Clair.icns" ]]; then
   iconset="$build/Clair.iconset"
-  rm -rf "$iconset"; mkdir -p "$iconset"
+  trash_artifact "$iconset"
+  mkdir -p "$iconset"
   for size in 16 32 128 256 512; do
     sips -z "$size" "$size" "$root/Resources/AppIcon.png" --out "$iconset/icon_${size}x${size}.png" > /dev/null
     double=$((size * 2))
@@ -39,9 +45,11 @@ cp "$build/Clair.icns" "$app/Contents/Resources/Clair.icns"
 cp "$root/Resources/使用说明.txt" "$app/Contents/Resources/使用说明.txt"
 # Keep the runtime's symlinked dylibs and license files, but not extended attributes:
 # detached signatures stored there do not match once the whole app is re-signed.
-rm -rf "$app/Contents/Resources/Ollama"
+trash_artifact "$app/Contents/Resources/Ollama"
 ditto --noextattr --noacl --noqtn "$root/runtime" "$app/Contents/Resources/Ollama"
-find "$app/Contents/Resources/Ollama" -name '*.tgz' -delete
+while IFS= read -r -d '' archive; do
+  trash_artifact "$archive"
+done < <(find "$app/Contents/Resources/Ollama" -name '*.tgz' -print0)
 codesign --force --sign - --options runtime --entitlements "$root/Resources/Clair.entitlements" "$app"
 codesign --verify --strict "$app"
 print -r -- "$app"

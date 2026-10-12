@@ -78,7 +78,7 @@ struct CommandPalette: View {
 
     private func matches(_ text: String) -> Bool { query.isEmpty || text.localizedCaseInsensitiveContains(query) }
     private var actions: [Item] {
-        let capture = controller.captureState == .recording ? "暂停" : controller.isPaused ? "继续听课" : controller.isImporting ? "停止转写" : "开始听课"
+        let capture = controller.captureState == .recording ? "暂停" : controller.isImporting ? "停止转写" : controller.startTitle
         return [
             Item(id: "capture", title: capture, symbol: "record.circle", shortcut: "⌘R", command: .toggleCapture),
             Item(id: "new", title: "新课堂", symbol: "square.and.pencil", shortcut: "⌘N", command: .newClass),

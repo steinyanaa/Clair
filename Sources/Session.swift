@@ -238,6 +238,8 @@ final class ClassController {
     @ObservationIgnored private var capture: SpeechCapture?
     @ObservationIgnored private(set) var captureID = UUID()
     @ObservationIgnored private var drafts = SpeechDraftIndex()
+    /// Word lookups already answered, keyed by selection, preset and model.
+    @ObservationIgnored var lookupCache: [WordLookup.CacheKey: WordMeaning] = [:]
     @ObservationIgnored private var captureOffset: Double = 0
     @ObservationIgnored private var captureStarted: Date?
     @ObservationIgnored private var worker: Task<Void, Never>?
@@ -294,6 +296,8 @@ final class ClassController {
     var pendingCount: Int { readyAt.count + (translatingLine == nil ? 0 : 1) }
     func isPending(_ id: String) -> Bool { readyAt[id] != nil || translatingLine == id }
     var locked: Bool { isRecording || isStarting || isStopping }
+    /// Title for the start action: an open class with captions is continued, not replaced.
+    var startTitle: String { isPaused || !session.lines.isEmpty ? "继续听课" : "开始听课" }
     var canToggleCapture: Bool { !isStarting && !isStopping && session.deletedAt == nil }
     var deletedCount: Int { history.filter { $0.deletedAt != nil }.count }
     var untranslatedCount: Int { session.lines.filter { $0.chinese.isEmpty && !isPending($0.id) }.count }
@@ -333,7 +337,7 @@ final class ClassController {
 
     func start() async {
         guard !isRecording, !isStarting, !isStopping, session.deletedAt == nil else { return }
-        if !isPaused, !session.lines.isEmpty { let project = session.projectID; newSession(); session.projectID = project }
+        // A saved class continues where it ended; a new class starts from 新课堂 (⌘N).
         isStarting = true; error = nil; status = "正在准备法语语音识别…"
         defer { isStarting = false }
         captureID = UUID(); drafts = SpeechDraftIndex(); let token = captureID

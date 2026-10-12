@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import Translation
 import CryptoKit
 import Observation
@@ -17,7 +18,10 @@ struct TranslationContext: Sendable {
 
 enum LocalModel {
     static var name: String { ModelOption.selectedTranslation }
-    static let endpoint = URL(string: "http://127.0.0.1:11439")!
+    /// Fixture runs (`-ClairClassDataRoot`) get their own port, so they never adopt or
+    /// stop the service of a Clair the user has open.
+    static let port = WorkspaceConfiguration.testRoot == nil ? 11439 : 11449
+    static let endpoint = URL(string: "http://127.0.0.1:\(port)")!
     // One connection pool for the whole class instead of a session per line.
     // Both limits stay at 5 s so a stalled model falls back as before.
     private static let session: URLSession = {
@@ -66,14 +70,26 @@ enum LocalModel {
         }
         return blocks.isEmpty ? "" : blocks.joined(separator: "\n\n") + "\n\n"
     }
+    /// Mark the actual occurrence; the translation prompt used by live captions stays separate.
+    static func lookupPrompt(_ text: String, sentence: String, range: NSRange, preset: ClassPreset) -> String {
+        guard let span = Range(range, in: sentence), String(sentence[span]) == text else {
+            return prompt(text, context: TranslationContext(preset: preset))
+        }
+        let marked = String(sentence[..<span.lowerBound]) + "[" + text + "]" + String(sentence[span.upperBound...])
+        return "Translate the French text inside square brackets into Simplified Chinese. The surrounding sentence only disambiguates its meaning. Translate exactly the bracketed span, excluding all words outside it, including modal and auxiliary verbs. Output only the short Chinese equivalent, no explanation.\n"
+            + contextBlocks(TranslationContext(preset: preset)) + "\nSentence: «" + marked + "»\n\nTranslate only: " + text
+    }
     static func generate(_ text: String, context: TranslationContext = TranslationContext(), patient: Bool = false) async throws -> TranslationResult {
+        try await generate(prompt: prompt(text, context: context), patient: patient)
+    }
+    static func generate(prompt: String, patient: Bool = false, limit: Int = 512) async throws -> TranslationResult {
         let started = Date()
         var request = URLRequest(url: endpoint.appendingPathComponent("api/generate"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: [
-            "model": name, "prompt": prompt(text, context: context), "stream": false, "keep_alive": keepAlive,
-            "options": ["temperature": 0, "num_ctx": 2048, "num_predict": 512]
+            "model": name, "prompt": prompt, "stream": false, "keep_alive": keepAlive,
+            "options": ["temperature": 0, "num_ctx": 2048, "num_predict": limit]
         ])
         let (data, response) = try await (patient ? patientSession : session).data(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
@@ -110,23 +126,36 @@ final class TranslationService {
     }
     func translate(_ french: String, context: TranslationContext = TranslationContext()) async throws -> TranslationResult {
         do { return try await LocalModel.generate(french, context: context) }
-        catch {
-            if Task.isCancelled { throw CancellationError() }
-            guard allowFallback else { throw error }
-            let started = Date()
-            if fallbackSession == nil {
-                let source = Locale.Language(identifier: "fr")
-                let target = Locale.Language(identifier: "zh-Hans")
-                let status = await LanguageAvailability().status(from: source, to: target)
-                guard status == .installed else {
-                    throw AppError("本地翻译暂不可用，系统备用翻译尚未安装。请点击「准备备用翻译」。")
-                }
-                fallbackSession = TranslationSession(installedSource: source, target: target)
+        catch { return try await systemTranslate(french, after: error) }
+    }
+    /// Lookup of a word or phrase. With a sentence the answer is the sense used there and
+    /// has no fallback (the system translator takes no context); without, it is the plain sense.
+    func lookUp(_ french: String, sentence: String?, range: NSRange? = nil, preset: ClassPreset) async throws -> TranslationResult {
+        if let sentence {
+            guard let range, let span = Range(range, in: sentence), String(sentence[span]) == french else {
+                throw AppError("所选文字已变化，请重新选择。")
             }
-            guard let fallbackSession else { throw error }
-            let response = try await fallbackSession.translate(french)
-            return TranslationResult(text: response.targetText, backend: TranscriptRules.fallbackBackend, seconds: Date().timeIntervalSince(started))
+            return try await LocalModel.generate(prompt: LocalModel.lookupPrompt(french, sentence: sentence, range: range, preset: preset), limit: 48)
         }
+        do { return try await LocalModel.generate(prompt: LocalModel.prompt(french, context: TranslationContext(preset: preset)), limit: 64) }
+        catch { return try await systemTranslate(french, after: error) }
+    }
+    private func systemTranslate(_ french: String, after error: Error) async throws -> TranslationResult {
+        if Task.isCancelled { throw CancellationError() }
+        guard allowFallback else { throw error }
+        let started = Date()
+        if fallbackSession == nil {
+            let source = Locale.Language(identifier: "fr")
+            let target = Locale.Language(identifier: "zh-Hans")
+            let status = await LanguageAvailability().status(from: source, to: target)
+            guard status == .installed else {
+                throw AppError("本地翻译暂不可用，系统备用翻译尚未安装。请点击「准备备用翻译」。")
+            }
+            fallbackSession = TranslationSession(installedSource: source, target: target)
+        }
+        guard let fallbackSession else { throw error }
+        let response = try await fallbackSession.translate(french)
+        return TranslationResult(text: response.targetText, backend: TranscriptRules.fallbackBackend, seconds: Date().timeIntervalSince(started))
     }
 }
 
@@ -319,7 +348,13 @@ final class ModelRuntime {
         } catch { assistantStatus = error.localizedDescription; throw error }
     }
     private func ensureServer() async throws {
-        if await healthy() { return }
+        if await healthy() {
+            if let process, process.isRunning { return }
+            // Not started by this run: a service an earlier Clair left behind when it quit
+            // without stopping it. Replace it so this run owns, and later stops, its service.
+            guard await Self.stopStrayService(port: LocalModel.port) else { return }
+        }
+        if let process, process.isRunning { process.terminate() }
         guard let resources = Bundle.main.resourceURL else { throw AppError("本地翻译组件缺失。") }
         let executable = resources.appendingPathComponent("Ollama/ollama")
         guard FileManager.default.isExecutableFile(atPath: executable.path) else { throw AppError("本地翻译组件缺失，请重新构建 App。") }
@@ -330,10 +365,13 @@ final class ModelRuntime {
         if !FileManager.default.fileExists(atPath: logfile.path) { FileManager.default.createFile(atPath: logfile.path, contents: nil) }
         try? log?.close()
         log = try FileHandle(forWritingTo: logfile); try log?.seekToEnd()
+        // A small shell parent runs the service and stops it as soon as this app is gone,
+        // even after a crash or force quit, so no model stays loaded in the background.
         let process = Process()
-        process.executableURL = executable; process.arguments = ["serve"]
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", Self.watchdog, executable.path, String(getpid())]
         var environment = ProcessInfo.processInfo.environment
-        environment["OLLAMA_HOST"] = "127.0.0.1:11439"
+        environment["OLLAMA_HOST"] = "127.0.0.1:\(LocalModel.port)"
         environment["OLLAMA_MODELS"] = workspace.models.path
         environment["OLLAMA_NO_CLOUD"] = "1"
         environment["OLLAMA_CONTEXT_LENGTH"] = "2048"
@@ -404,5 +442,39 @@ final class ModelRuntime {
         heartbeat?.cancel(); heartbeat = nil
         if let process, process.isRunning { process.terminate() }
         process = nil; try? log?.close(); log = nil
+    }
+
+    /// `$0` is the bundled ollama, `$1` this app's PID. Polls once a second.
+    private static let watchdog = """
+        "$0" serve &
+        child=$!
+        trap 'kill -TERM "$child" 2>/dev/null; wait "$child"; exit 0' TERM INT HUP
+        while kill -0 "$1" 2>/dev/null && kill -0 "$child" 2>/dev/null; do sleep 1; done
+        kill -TERM "$child" 2>/dev/null
+        wait "$child"
+        """
+
+    /// Stops whatever listens on the port if every listener is a Clair bundled ollama.
+    /// Returns false, leaving it running, when another program owns the port.
+    private static func stopStrayService(port: Int) async -> Bool {
+        await Task.detached {
+            let lsof = Process(), pipe = Pipe()
+            lsof.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
+            lsof.arguments = ["-nP", "-t", "-iTCP:\(port)", "-sTCP:LISTEN"]
+            lsof.standardOutput = pipe; lsof.standardError = FileHandle.nullDevice
+            guard (try? lsof.run()) != nil else { return false }
+            lsof.waitUntilExit()
+            let output = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            let pids = output.split(whereSeparator: \.isNewline).compactMap { pid_t($0) }
+            func path(_ pid: pid_t) -> String? {
+                var buffer = [CChar](repeating: 0, count: 4096)
+                return proc_pidpath(pid, &buffer, UInt32(buffer.count)) > 0 ? String(cString: buffer) : nil
+            }
+            guard !pids.isEmpty, pids.allSatisfy({ path($0)?.hasSuffix("/Contents/Resources/Ollama/ollama") == true }) else { return false }
+            for pid in pids { kill(pid, SIGTERM) }
+            for _ in 0..<50 where pids.contains(where: { kill($0, 0) == 0 }) { usleep(100_000) }
+            for pid in pids where kill(pid, 0) == 0 { kill(pid, SIGKILL) }
+            return true
+        }.value
     }
 }

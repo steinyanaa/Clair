@@ -3,14 +3,17 @@
 # user guide, verifies it and writes a SHA-256 file. Contains no user data or models.
 set -eu
 root="${0:A:h:h}"
+source "$root/scripts/trash.sh"
 version=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$root/Resources/Info.plist")
 dmg="$root/dist/Clair-$version-arm64.dmg"
 stage=$(mktemp -d)
-trap 'rm -rf "$stage"' EXIT
+trap 'trash_artifact "$stage"' EXIT
 codesign --verify --strict "$root/dist/Clair.app"
 ditto --noqtn "$root/dist/Clair.app" "$stage/Clair.app"
 cp "$root/Resources/使用说明.txt" "$stage/安装与使用.txt"
 ln -s /Applications "$stage/Applications"
+trash_artifact "$dmg"
+trash_artifact "$dmg.sha256"
 hdiutil create -volname "Clair $version" -srcfolder "$stage" -format UDZO -ov "$dmg"
 hdiutil verify "$dmg"
 (cd "$root/dist" && shasum -a 256 "${dmg:t}" > "${dmg:t}.sha256")

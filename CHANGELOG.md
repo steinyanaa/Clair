@@ -4,6 +4,45 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.5.1] - 2026-10-12
+
+### Fixed
+- **Lookup follows the selected occurrence**: UTF-16 ranges now travel from the text view through elision cleanup, French lemmatisation, sentence markers and the lookup cache. Repeated `faits` can resolve to `fait` (事实) or `faire` (做) at their own positions. Cache entries also include the subject, topic, glossary and model, so changing the class preset does not reuse an old meaning.
+- **Function words no longer borrow a nearby noun's meaning**: common words such as `en`, `y`, `dont`, `que`, `se` and `ne` use a small, original, built-in usage table, labelled 常见用法 with 内置法语用法 as the source. It describes possible uses, without claiming to identify the sense in this sentence. Other short/function words skip contextual generation. Selecting a complete phrase (`en revanche`, `il y a`, `au lieu de`) still translates that phrase.
+- **Isolated verb meanings**: verbs use the selected occurrence's dictionary form without another sentence-level generation, avoiding subjects, auxiliaries and modal verbs (`peut ralentir` → 减速 for `ralentir`, without 可能). Other words use a bracket-marked target; sentence-like answers and obvious expansions of the plain Chinese head are suppressed. Matching classroom terms are used directly. System translation fallback remains available; live-caption prompts and their context blocks are unchanged.
+
+### Changed
+- Build/package cleanup moves replaced artifacts and staging files to Trash. Full builds refuse to overwrite/sign the app while Clair is running.
+
+### Added
+- **Reproducible lookup evaluation**: `scripts/test.sh --lookup -ClairClassDataRoot <temporary-directory>` uses the separate local service on port 11449. Add `--baseline` for frozen 0.5.0 behavior or `--marked` for the marker-only experiment. All 36 cases print their selection, accepted answers, forbidden adjacent meanings, actual result and elapsed time; the summary reports accuracy and latency. No downloads or assistant model are needed.
+
+### Validation
+- On this Mac with `translategemma:4b`, temperature 0, warm model and empty lookup caches: **11/36 (30.6%), mean 0.394 s before → 33/36 (91.7%), mean 0.124 s after**; final maximum 0.350 s, 0/36 over 0.5 s, no service errors. The marker-only experiment reached 19/36 (52.8%), mean 0.278 s; a dictionary-entry prompt variant reached only 15/36, so was not adopted. Model warm-up and compilation are excluded; both plain and contextual requests are included.
+- Scoring requires an accepted short equivalent for content words and rejects neighbouring meanings; labelled general usage is accepted for function words. This is a fixed regression set, not an estimate of unrestricted translation accuracy. Per-case results: `docs/lookup-evaluation-0.5.1/{before,marked,after}.jsonl`.
+
+- `scripts/build.sh --compile-only` passed with Swift 5 / macOS 26. Three consecutive `scripts/test.sh` runs each passed all **19 reported groups**, including `wordLookup` and `continueClass`; logs are alongside the evaluation results. Range, elision, repeated-lemma, cache invalidation and grammar-only cases run without a model.
+- An additional system-fallback check reached the existing “备用翻译尚未安装” error: French→Chinese system resources are not installed on this Mac. Successful fallback could not be exercised offline; its implementation is retained. No resources were downloaded.
+
+### Known limitations
+- Three cases still fail the strict selection-only test: `L’augmentation est rapide` can return 快速 for `augmentation`; mathematical `corps` without a term entry returns 实数的集合 instead of 域; `base forte` returns 强碱 for selected `base` instead of 碱. A classroom term (`corps = 域`, `base = 碱`) avoids model ambiguity. The lightweight filter does not prove semantic alignment for arbitrary content words.
+- Function-word tables do not resolve the current grammatical use, and verb lookups intentionally show the independent dictionary meaning. Select a longer phrase when its construction matters.
+
+## [0.5.0] - 2026-10-12
+
+### Added
+- **Word lookup**: click a French word in the transcript to see its base form (allons → aller, from the system lemmatiser), its plain sense, the sense in that sentence and any matching term from the class preset; drag over several words to translate the selection, or use 查词 / 翻译所选 in the context menu. Runs on the local translation model (about 0.2 s per word; falls back to the system translator for the plain sense). Measured on 10 lecture words, the in-sentence prompt picks the field's sense where the plain one does not (base → 强碱, moment → 力矩); answers that come back as a whole sentence are dropped. Can be turned off in Settings.
+
+### Fixed
+- **The model service no longer outlives the app**: it now runs under a small watchdog that stops it within about a second when Clair quits, crashes or is force-quit, and a service left behind by an earlier version is stopped on launch instead of being reused (which had kept a model loaded in memory indefinitely). Fixture runs (`-ClairClassDataRoot`) use their own port.
+
+### Changed
+- **Redesign**: warm paper palette (light and dark) with a single clay accent, New York / Songti headings and serif French lines. The toolbar is now plain text tabs (转录 / 课堂助手) with a sliding clay underline and two borderless menus; search moved into the sidebar under a new 「新课堂」 row.
+- **New class composer**: topic, term list, audio source and 开始听课 sit in one centred card, with subject pills beneath; the bottom dock takes over once listening starts.
+- **Class assistant**: quick actions, status, export and send live inside the composer; answers read without a box, questions sit in warm bubbles, citations are small outlined pills.
+- Class list and sidebar draw their own warm selection instead of the system accent; clicks, ⌘/⇧-click, ⌘A, arrow keys, Delete, drag and context menus work as before.
+- **Ending a class no longer forces a new one**: on a saved class the main button reads 继续听课 and continues the same class; start a new one with 新课堂 (⌘N).
+
 ## [0.4.0] - 2026-10-12
 
 ### Added

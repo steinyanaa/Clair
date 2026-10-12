@@ -65,6 +65,7 @@ struct ClassWindow: View {
                            renameProject: { nameEdit = NameEdit(kind: .renameProject, target: $0.id, text: $0.name) },
                            deleteProject: { projectToDelete = $0 },
                            newProject: { perform(.newProject) },
+                           newClass: { perform(.newClass) },
                            emptyTrash: { perform(.emptyTrash) })
                 .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 280)
         } content: {
@@ -80,7 +81,7 @@ struct ClassWindow: View {
         .navigationSplitViewStyle(.balanced)
         .navigationTitle(controller.folderTitle(folder))
         .navigationSubtitle(query.isEmpty ? "\(records.count) 堂课" : "\(records.count) 个结果")
-        .searchable(text: $query, placement: .toolbar, prompt: "搜索课堂与转录")
+        .searchable(text: $query, placement: .sidebar, prompt: "搜索课堂与转录")
         .searchFocused($searchFocused)
         .onReceive(NotificationCenter.default.publisher(for: .clairCommand)) { note in
             if let command = note.object as? WindowCommand { perform(command) }
@@ -173,7 +174,7 @@ struct ClassWindow: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(nsColor: .textBackgroundColor))
+        .background(Palette.canvas)
         .safeAreaBar(edge: .top) { banners }
         .toolbar { toolbar }
         .dropDestination(for: URL.self) { urls, _ in importDropped(urls) } isTargeted: { dropTargeted = $0 && !controller.locked }
@@ -202,43 +203,43 @@ struct ClassWindow: View {
     }
 
     private var dropHighlight: some View {
-        RoundedRectangle(cornerRadius: Radius.medium)
-            .strokeBorder(Color.accentColor, style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
-            .background(Color.accentColor.opacity(0.06), in: RoundedRectangle(cornerRadius: Radius.medium))
+        RoundedRectangle(cornerRadius: Radius.medium + 4)
+            .strokeBorder(Palette.clay, style: StrokeStyle(lineWidth: 1.5, dash: [6, 4]))
+            .background(Palette.claySoft.opacity(0.5), in: RoundedRectangle(cornerRadius: Radius.medium + 4))
             .overlay {
                 Label("松开以导入音频", systemImage: "waveform.badge.plus")
-                    .font(.title3.weight(.semibold))
+                    .font(.system(size: 15, weight: .medium)).foregroundStyle(Palette.ink)
                     .padding(.horizontal, Spacing.xl).padding(.vertical, Spacing.m)
-                    .glassEffect()
+                    .surfaceCard(cornerRadius: Radius.medium)
             }
             .padding(Spacing.m)
             .allowsHitTesting(false)
     }
 
+    // Plain text tabs and two borderless icons: the toolbar stays quiet so the page leads.
     @ToolbarContentBuilder private var toolbar: some ToolbarContent {
         ToolbarItem(placement: .principal) {
-            Picker("内容", selection: $pane) {
-                Text("转录").tag(DetailPane.transcript)
-                Text("课堂助手").tag(DetailPane.assistant)
+            PaneTabs(selection: $pane).help("转录 ⌘1 · 课堂助手 ⌘2")
+        }
+        .sharedBackgroundVisibility(.hidden)
+        ToolbarItem(placement: .primaryAction) {
+            HStack(spacing: Spacing.xxs) {
+                Menu {
+                    Button("导入音频…") { perform(.importAudio) }.disabled(controller.locked)
+                    Divider()
+                    Button("导出双语文本…") { controller.export(srt: false) }.disabled(controller.session.lines.isEmpty)
+                    Button("导出字幕 SRT…") { controller.export(srt: true) }.disabled(controller.session.lines.isEmpty)
+                    Button("导出课堂笔记…") { controller.exportStudy() }
+                        .disabled(!(controller.session.studyMessages ?? []).contains { $0.state == "complete" })
+                } label: { ToolbarIcon(symbol: "square.and.arrow.up", title: "导入与导出") }
+                .help("导入音频或导出课堂")
+                Menu { classMenu } label: { ToolbarIcon(symbol: "ellipsis", title: "课堂操作") }
+                    .help("课堂操作")
             }
-            .pickerStyle(.segmented).frame(width: 190)
-            .help("转录 ⌘1 · 课堂助手 ⌘2")
+            .menuStyle(.button).menuIndicator(.hidden)
+            .buttonStyle(QuietButtonStyle(size: 30))
         }
-        ToolbarItemGroup(placement: .primaryAction) {
-            Button { perform(.newClass) } label: { Label("新课堂", systemImage: "square.and.pencil") }
-                .help("新课堂 ⌘N").disabled(controller.locked)
-            Menu {
-                Button("导入音频…") { perform(.importAudio) }.disabled(controller.locked)
-                Divider()
-                Button("导出双语文本…") { controller.export(srt: false) }.disabled(controller.session.lines.isEmpty)
-                Button("导出字幕 SRT…") { controller.export(srt: true) }.disabled(controller.session.lines.isEmpty)
-                Button("导出课堂笔记…") { controller.exportStudy() }
-                    .disabled(!(controller.session.studyMessages ?? []).contains { $0.state == "complete" })
-            } label: { Label("导入与导出", systemImage: "square.and.arrow.up") }
-            .help("导入音频或导出课堂")
-            Menu { classMenu } label: { Label("课堂操作", systemImage: "ellipsis") }
-                .help("课堂操作")
-        }
+        .sharedBackgroundVisibility(.hidden)
     }
 
     @ViewBuilder private var classMenu: some View {
@@ -268,13 +269,14 @@ struct ClassWindow: View {
     }
 
     /// UI-check hooks: `-ClairClassUITestPane assistant`, `-ClairClassUITestPalette YES`,
-    /// `-ClairClassUITestSettings YES`. Launch arguments only; nothing is stored.
+    /// `-ClairClassUITestSettings YES`, `-ClairClassUITestOpen <class id>`. Launch arguments only; nothing is stored.
     private func applyLaunchArguments() async {
         let arguments = UserDefaults.standard.volatileDomain(forName: UserDefaults.argumentDomain)
         if let value = arguments["ClairClassUITestPane"] as? String, let target = DetailPane(rawValue: value) { pane = target }
         if arguments["ClairClassUITestPalette"] != nil { showPalette = true }
         if arguments["ClairClassUITestSettings"] != nil { openSettings() }
         if let value = arguments["ClairClassUITestFolder"] as? String { folder = value }
+        if let value = arguments["ClairClassUITestOpen"] as? String, let id = UUID(uuidString: value) { perform(.open(id)) }
         if arguments["ClairClassUITestSelectAll"] != nil {
             // After the folder change above has cleared any selection.
             try? await Task.sleep(for: .milliseconds(300))
@@ -340,23 +342,26 @@ struct LibrarySidebar: View {
     let renameProject: (ClassProject) -> Void
     let deleteProject: (ClassProject) -> Void
     let newProject: () -> Void
+    let newClass: () -> Void
     let emptyTrash: () -> Void
     @State private var dropTarget: String?
 
     var body: some View {
         let live = controller.history.filter { $0.deletedAt == nil }
         let byProject = Dictionary(grouping: live.compactMap(\.projectID), by: { $0 }).mapValues(\.count)
-        List(selection: $folder) {
+        // No List selection: rows draw their own warm selection instead of the system accent.
+        List {
+            NewClassRow(locked: controller.locked, action: newClass)
             Section("资料库") {
-                Label("所有课堂", systemImage: "tray.full").badge(live.count).tag("all")
-                Label("未分类", systemImage: "tray").badge(live.filter { $0.projectID == nil }.count).tag("unfiled")
+                row("所有课堂", "tray.full", live.count, "all")
+                row("未分类", "tray", live.filter { $0.projectID == nil }.count, "unfiled")
                     .classDrop("unfiled", target: $dropTarget, enabled: !controller.locked) { ids in
                         for id in ids { controller.editRecord(id, move: true, deleted: false) }
                     }
             }
             Section("项目") {
                 ForEach(controller.projects) { project in
-                    Label(project.name, systemImage: "folder").badge(byProject[project.id] ?? 0).tag(project.id.uuidString)
+                    row(project.name, "folder", byProject[project.id] ?? 0, project.id.uuidString)
                         .contextMenu {
                             Button("重命名项目…") { renameProject(project) }
                             Divider()
@@ -366,11 +371,10 @@ struct LibrarySidebar: View {
                             for id in ids { controller.editRecord(id, project: project.id, move: true, deleted: false) }
                         }
                 }
-                Button(action: newProject) { Label("新项目文件夹…", systemImage: "plus") }
-                    .buttonStyle(.borderless).foregroundStyle(.secondary)
+                SidebarRow(title: "新项目文件夹…", symbol: "plus", count: 0, selected: false, muted: true, action: newProject)
             }
             Section {
-                Label("最近删除", systemImage: "trash").badge(controller.history.count - live.count).tag("trash")
+                row("最近删除", "trash", controller.history.count - live.count, "trash")
                     .classDrop("trash", target: $dropTarget, enabled: !controller.locked) { ids in
                         controller.setDeleted(Set(ids), true)
                     }
@@ -382,9 +386,47 @@ struct LibrarySidebar: View {
         }
         .listStyle(.sidebar)
     }
+
+    private func row(_ title: String, _ symbol: String, _ count: Int, _ tag: String) -> some View {
+        SidebarRow(title: title, symbol: symbol, count: count, selected: folder == tag) { folder = tag }
+    }
+}
+
+/// Folder row with its own selection wash; the count sits where a badge would.
+struct SidebarRow: View {
+    let title: String
+    let symbol: String
+    let count: Int
+    let selected: Bool
+    var muted = false
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: Spacing.s) {
+                Image(systemName: symbol).font(.system(size: 13)).foregroundStyle(Palette.ink2).frame(width: 20)
+                Text(title).font(.system(size: 13, weight: selected ? .medium : .regular))
+                    .foregroundStyle(muted ? Palette.ink2 : Palette.ink).lineLimit(1)
+                Spacer(minLength: Spacing.s)
+                if count > 0 { Text("\(count)").font(.system(size: 11.5)).monospacedDigit().foregroundStyle(Palette.ink3) }
+            }
+            .padding(.horizontal, Spacing.s).frame(height: 30)
+            .background(RoundedRectangle(cornerRadius: 8).fill(selected ? Palette.selectionFocused : hovering ? Palette.wash.opacity(0.7) : .clear))
+            .contentShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
+        .sidebarRowBleed()
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+    }
 }
 
 private extension View {
+    /// Lets a row's wash reach the sidebar's edges, so icons line up with the search field.
+    func sidebarRowBleed() -> some View { padding(.horizontal, -(Spacing.s - 1)) }
+
     /// Accepts classes dragged from the list, with a visible target highlight.
     func classDrop(_ id: String, target: Binding<String?>, enabled: Bool, perform: @escaping ([UUID]) -> Void) -> some View {
         dropDestination(for: String.self) { values, _ in
@@ -397,7 +439,7 @@ private extension View {
         }
         .background {
             if target.wrappedValue == id {
-                RoundedRectangle(cornerRadius: 6).fill(Color.accentColor.opacity(0.2)).padding(-Spacing.xs)
+                RoundedRectangle(cornerRadius: 6).fill(Palette.claySoft).padding(-Spacing.xs)
             }
         }
     }
@@ -415,9 +457,12 @@ struct ClassList: View {
     let restore: (Set<UUID>) -> Void
     let purge: (Set<UUID>) -> Void
     let deleteKey: () -> Void
+    @FocusState private var listFocused: Bool
+    /// Where a ⇧-click range starts.
+    @State private var anchor: UUID?
 
     var body: some View {
-        if records.isEmpty { emptyState } else { list(records) }
+        if records.isEmpty { emptyState.frame(maxWidth: .infinity, maxHeight: .infinity).background(Palette.canvas) } else { list(records) }
     }
 
     @ViewBuilder private var emptyState: some View {
@@ -436,29 +481,73 @@ struct ClassList: View {
         }
     }
 
+    /// Classes the list shows as selected: the batch, otherwise the open class.
+    private var selectedIDs: Set<UUID> { batchSelection.count > 1 ? batchSelection : [controller.session.id] }
+
+    // Drawn by hand rather than as a List so selection uses the warm neutral wash
+    // instead of the system accent. Click opens; ⌘-click and ⇧-click build a batch;
+    // arrow keys move and Delete acts on the selection, as in a native list.
     private func list(_ records: [ClassSession]) -> some View {
         let projectNames = Dictionary(uniqueKeysWithValues: controller.projects.map { ($0.id, $0.name) })
         let liveID = controller.isRecording || controller.isPaused ? controller.session.id : nil
-        // ⌘/⇧-click builds a batch; a single selection opens that class as before.
-        let selection = Binding<Set<UUID>>(
-            get: { batchSelection.count > 1 ? batchSelection : [controller.session.id] },
-            set: { picked in
-                guard !controller.locked else { return }
-                if picked.count > 1 { batchSelection = picked; return }
-                batchSelection = []
-                if let id = picked.first, let item = records.first(where: { $0.id == id }) { controller.select(item) }
-            })
-        return List(selection: selection) {
-            ForEach(records) { record in
-                ClassRow(record: record, isLive: record.id == liveID,
-                         projectName: folder == "all" ? record.projectID.flatMap { projectNames[$0] } : nil)
-                    .tag(record.id)
-                    .draggable(dragPayload(record))
+        let selected = selectedIDs
+        return ScrollViewReader { reader in
+            ScrollView {
+                LazyVStack(spacing: Spacing.xxs) {
+                    ForEach(records) { record in
+                        ClassRow(record: record, isLive: record.id == liveID,
+                                 projectName: folder == "all" ? record.projectID.flatMap { projectNames[$0] } : nil)
+                            .modifier(ClassRowChrome(selected: selected.contains(record.id), focused: listFocused))
+                            .id(record.id)
+                            .onTapGesture { click(record, in: records) }
+                            .draggable(dragPayload(record))
+                            .contextMenu { menu(selected.contains(record.id) ? selected : [record.id]) }
+                            .accessibilityAddTraits(selected.contains(record.id) ? [.isButton, .isSelected] : .isButton)
+                            .accessibilityAction { click(record, in: records) }
+                    }
+                }
+                .padding(.horizontal, Spacing.s + Spacing.xxs).padding(.vertical, Spacing.xs)
             }
+            .background(Palette.canvas)
+            .focusable()
+            .focusEffectDisabled()
+            .focused($listFocused)
+            .onKeyPress(.downArrow) { step(1, in: records, reader: reader); return .handled }
+            .onKeyPress(.upArrow) { step(-1, in: records, reader: reader); return .handled }
+            .onDeleteCommand(perform: deleteKey)
+            .onCommand(#selector(NSResponder.selectAll(_:))) { if !controller.locked { apply(Set(records.map(\.id)), in: records) } }
         }
-        .listStyle(.inset)
-        .contextMenu(forSelectionType: UUID.self) { ids in menu(ids) }
-        .onDeleteCommand(perform: deleteKey)
+    }
+
+    private func click(_ record: ClassSession, in records: [ClassSession]) {
+        guard !controller.locked else { return }
+        listFocused = true
+        let flags = NSEvent.modifierFlags
+        if flags.contains(.command) {
+            var picked = selectedIDs
+            if picked.contains(record.id) { picked.remove(record.id) } else { picked.insert(record.id) }
+            apply(picked, in: records); anchor = record.id
+        } else if flags.contains(.shift), let start = records.firstIndex(where: { $0.id == (anchor ?? controller.session.id) }),
+                  let end = records.firstIndex(where: { $0.id == record.id }) {
+            apply(Set(records[min(start, end)...max(start, end)].map(\.id)), in: records)
+        } else {
+            apply([record.id], in: records); anchor = record.id
+        }
+    }
+
+    /// Two or more classes form a batch; a single one simply opens.
+    private func apply(_ picked: Set<UUID>, in records: [ClassSession]) {
+        if picked.count > 1 { batchSelection = picked; return }
+        batchSelection = []
+        if let id = picked.first, let item = records.first(where: { $0.id == id }) { controller.select(item) }
+    }
+
+    private func step(_ offset: Int, in records: [ClassSession], reader: ScrollViewProxy) {
+        guard !controller.locked, !records.isEmpty else { return }
+        let current = records.firstIndex { $0.id == (batchSelection.count > 1 ? anchor : controller.session.id) }
+        let index = current.map { min(max($0 + offset, 0), records.count - 1) } ?? (offset > 0 ? 0 : records.count - 1)
+        apply([records[index].id], in: records); anchor = records[index].id
+        reader.scrollTo(records[index].id)
     }
 
     /// Dragging a row inside the batch carries the whole batch, one ID per line.
@@ -509,14 +598,17 @@ struct ClassRow: View {
         VStack(alignment: .leading, spacing: Spacing.xs) {
             HStack(alignment: .firstTextBaseline, spacing: Spacing.xs + Spacing.xxs) {
                 if isLive {
-                    Circle().fill(.red).frame(width: 7, height: 7).accessibilityLabel("正在听课")
+                    Circle().fill(Palette.clay).frame(width: 7, height: 7)
+                        .background(Circle().fill(Palette.claySoft).frame(width: 13, height: 13))
+                        .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 1 }
+                        .accessibilityLabel("正在听课")
                 }
-                Text(record.title).font(.rowTitle).lineLimit(1)
+                Text(record.title).font(.rowTitle).foregroundStyle(Palette.ink).lineLimit(1)
                 Spacer(minLength: Spacing.s)
-                Text(dateText).font(.rowMeta).monospacedDigit().foregroundStyle(.secondary)
+                Text(dateText).font(.rowMeta).monospacedDigit().foregroundStyle(Palette.ink3)
             }
             if !preview.isEmpty {
-                Text(preview).font(.rowPreview).foregroundStyle(.secondary).lineLimit(2)
+                Text(preview).font(.rowPreview).foregroundStyle(Palette.ink2).lineSpacing(2).lineLimit(2)
             }
             HStack(spacing: Spacing.xs) {
                 Image(systemName: AudioSource.symbol(forRecordSource: record.source)).accessibilityLabel(record.source)
@@ -526,9 +618,11 @@ struct ClassRow: View {
                     Text(projectName).lineLimit(1)
                 }
             }
-            .font(.rowMeta).foregroundStyle(.tertiary)
+            .font(.rowMeta).foregroundStyle(Palette.ink3)
+            .padding(.top, Spacing.xxs)
         }
-        .padding(.vertical, Spacing.xs + Spacing.xxs)
+        .padding(.vertical, Spacing.s)
+        .padding(.horizontal, Spacing.xs)
         .accessibilityElement(children: .combine)
     }
 }
@@ -597,6 +691,102 @@ struct BatchSelectionView: View {
             Button("取消选择", action: clear).buttonStyle(.link)
             }
         }
+    }
+}
+
+/// Rounded wash behind a class row for hover and selection.
+private struct ClassRowChrome: ViewModifier {
+    let selected: Bool
+    let focused: Bool
+    @State private var hovering = false
+
+    func body(content: Content) -> some View {
+        content
+            .padding(.horizontal, Spacing.s)
+            .background {
+                RoundedRectangle(cornerRadius: Radius.medium)
+                    .fill(selected ? (focused ? Palette.selectionFocused : Palette.selection) : hovering ? Palette.wash.opacity(0.6) : .clear)
+            }
+            .contentShape(RoundedRectangle(cornerRadius: Radius.medium))
+            .onHover { hovering = $0 }
+            .animation(.easeOut(duration: 0.12), value: hovering)
+    }
+}
+
+/// First sidebar row: the one clay "new" mark, like a notebook's blank page.
+struct NewClassRow: View {
+    let locked: Bool
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: Spacing.s) {
+                Image(systemName: "plus").font(.system(size: 10, weight: .bold)).foregroundStyle(.white)
+                    .frame(width: 20, height: 20).background(Palette.clay, in: Circle())
+                    .scaleEffect(hovering ? 1.06 : 1)
+                Text("新课堂").font(.system(size: 13.5, weight: .medium)).foregroundStyle(Palette.ink)
+                Spacer()
+                Text("⌘N").font(.system(size: 11)).foregroundStyle(Palette.ink3)
+            }
+            .padding(.horizontal, Spacing.s).frame(height: 32)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .sidebarRowBleed()
+        .disabled(locked)
+        .opacity(locked ? 0.5 : 1)
+        .onHover { hovering = $0 && !locked }
+        .animation(.spring(response: 0.25, dampingFraction: 0.6), value: hovering)
+        .help("新课堂 ⌘N")
+        .padding(.bottom, Spacing.s)
+    }
+}
+
+/// Transcript / assistant switch drawn as text; a clay bar slides to the chosen pane.
+struct PaneTabs: View {
+    @Binding var selection: DetailPane
+    @Namespace private var underline
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        HStack(spacing: Spacing.xxl) {
+            tab("转录", .transcript)
+            tab("课堂助手", .assistant)
+        }
+        .padding(.horizontal, Spacing.s)
+        .frame(height: 30)
+        .accessibilityElement(children: .contain)
+    }
+
+    private func tab(_ title: String, _ pane: DetailPane) -> some View {
+        let selected = selection == pane
+        return Button {
+            withAnimation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.82)) { selection = pane }
+        } label: {
+            Text(title)
+                .font(.system(size: 13.5, weight: selected ? .medium : .regular))
+                .foregroundStyle(selected ? Palette.ink : Palette.ink3)
+                .padding(.vertical, Spacing.s)
+                .overlay(alignment: .bottom) {
+                    if selected {
+                        Capsule().fill(Palette.clay).frame(height: 2)
+                            .matchedGeometryEffect(id: "underline", in: underline)
+                    }
+                }
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+}
+
+/// Toolbar menu label: a single symbol with an accessible name, no indicator.
+struct ToolbarIcon: View {
+    let symbol: String
+    let title: String
+    var body: some View {
+        Image(systemName: symbol).font(.system(size: 14)).frame(width: 30, height: 30).accessibilityLabel(title)
     }
 }
 

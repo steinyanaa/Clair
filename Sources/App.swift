@@ -40,12 +40,14 @@ struct ClairClassApp: App {
         Window("Clair", id: "main") {
             ClassWindow(controller: controller, runtime: controller.runtime)
                 .frame(minWidth: 1000, minHeight: 640)
+                .tint(Palette.clay)
+                .containerBackground(Palette.canvas, for: .window)
                 .task { delegate.controller = controller; await controller.initialize() }
         }
         .defaultSize(width: 1260, height: 800)
         .windowToolbarStyle(.unified)
         .commands { ClairCommands(controller: controller) }
-        Settings { ClairSettings(controller: controller, runtime: controller.runtime).frame(width: 600, height: 640) }
+        Settings { ClairSettings(controller: controller, runtime: controller.runtime).frame(width: 600, height: 640).tint(Palette.clay) }
     }
 }
 
@@ -62,7 +64,7 @@ struct ClairCommands: Commands {
         case .recording: "暂停"
         case .importing: "停止转写"
         case .paused: "继续听课"
-        default: "开始听课"
+        default: controller.startTitle
         }
     }
 

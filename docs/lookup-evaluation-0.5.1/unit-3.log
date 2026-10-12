@@ -1,0 +1,7 @@
+/Users/steinyanaa/Desktop/transcribe/Clair/.build/ClairTests: replacing existing signature
+{"batchTrashAndPurge":"passed","libraryAutosave":"passed","markdownBlocks":"passed","projectRemoval":"passed"}
+{"continuationMerge":"passed","fillerCleanup":"passed","sentenceRepair":"passed","uncertainMarks":"passed"}
+{"continueClass":"passed","wordLookup":"passed"}
+{"classPresets":"passed","translationContext":"passed"}
+{"sessionPersistence":"passed","srtExport":"passed","transcriptRules":"passed"}
+{"contextBoundaries":"passed","projectRenameMove":"passed","softDeleteRestore":"passed","studyPersistence":"passed"}

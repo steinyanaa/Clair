@@ -17,9 +17,9 @@ struct StudyPanel: View {
         ScrollViewReader { reader in
             ScrollView {
                 if messages.isEmpty {
-                    emptyState.padding(.top, 80)
+                    emptyState.containerRelativeFrame(.vertical, alignment: .center) { height, _ in height * 0.8 }
                 } else {
-                    LazyVStack(alignment: .leading, spacing: Spacing.xxl) {
+                    LazyVStack(alignment: .leading, spacing: Spacing.xxl + Spacing.xs) {
                         ForEach(messages) { message in
                             StudyMessageView(message: message, status: controller.studyStatus, busy: controller.assistantBusy,
                                              citations: message.state == "complete" ? StudyContext.citations(message.text, session: controller.session) : [],
@@ -29,8 +29,8 @@ struct StudyPanel: View {
                         }
                         Color.clear.frame(height: 1).id("study-bottom")
                     }
-                    .frame(maxWidth: Layout.readingWidth)
-                    .padding(Spacing.xxl)
+                    .frame(maxWidth: Layout.readingWidth - 60)
+                    .padding(.horizontal, Spacing.xxxl + Spacing.s).padding(.vertical, Spacing.xxl)
                     .frame(maxWidth: .infinity)
                 }
             }
@@ -41,56 +41,58 @@ struct StudyPanel: View {
     }
 
     private var emptyState: some View {
-        ContentUnavailableView {
-            Label("把课堂变成笔记", systemImage: "sparkles")
-        } description: {
+        VStack(spacing: Spacing.s + Spacing.xxs) {
+            Image(systemName: "sparkle").font(.system(size: 24, weight: .medium)).foregroundStyle(Palette.clay)
+                .padding(.bottom, Spacing.s).accessibilityHidden(true)
+            Text("把课堂变成笔记").font(.display(28)).foregroundStyle(Palette.ink)
             Text(hasTranscript
                  ? "整理主题、生成纪要、提取术语，或直接提问。\n回答依据当前转录，并标出可以跳回原文的时间点。"
                  : "先开始听课，或打开一堂已有课堂，再使用课堂助手。")
+                .font(.system(size: 14.5)).foregroundStyle(Palette.ink2).multilineTextAlignment(.center).lineSpacing(4)
         }
+        .padding(.horizontal, Spacing.xxl)
+        .frame(maxWidth: .infinity)
     }
 
     private var composer: some View {
-        VStack(alignment: .leading, spacing: Spacing.s) {
-            HStack(spacing: Spacing.s) {
-                GlassEffectContainer(spacing: Spacing.xs) {
-                    HStack(spacing: Spacing.s) {
-                        ForEach([StudyAction.organize, .minutes, .terms]) { action in
-                            Button { controller.runStudy(action) } label: { Label(action.rawValue, systemImage: action.symbol) }
-                                .buttonStyle(.glass).disabled(!available)
-                        }
+        VStack(alignment: .leading, spacing: Spacing.m) {
+            TextField(hasTranscript ? "问问这堂课，例如：这两个概念有什么区别？" : "需要先有课堂转录", text: $question, axis: .vertical)
+                .lineLimit(1...5).textFieldStyle(.plain).font(.system(size: 14.5)).foregroundStyle(Palette.ink)
+                .focused($composerFocused)
+                .padding(.top, Spacing.xs)
+                .disabled(!hasTranscript)
+            HStack(spacing: Spacing.s - Spacing.xxs) {
+                ForEach([StudyAction.organize, .minutes, .terms]) { action in
+                    Button { controller.runStudy(action) } label: {
+                        Label(action.rawValue, systemImage: action.symbol).labelStyle(ComposerLabelStyle())
                     }
+                    .buttonStyle(GhostButtonStyle()).disabled(!available)
                 }
                 Spacer(minLength: Spacing.s)
                 if controller.assistantBusy {
                     ProgressView().controlSize(.small)
-                    Text(controller.studyStatus).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                    Button("停止") { controller.cancelStudy(); controller.save() }.controlSize(.small)
+                    Text(controller.studyStatus).font(.system(size: 11.5)).foregroundStyle(Palette.ink3).lineLimit(1)
+                    Button("停止") { controller.cancelStudy(); controller.save() }.buttonStyle(GhostButtonStyle())
                 } else {
-                    Text(runtime.assistantReady ? "Gemma 本地 · 依据课堂转录" : "课堂助手模型可在设置中下载")
-                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    Text(runtime.assistantReady ? "Gemma 本地 · 只依据这堂课的转录" : "课堂助手模型可在设置中下载")
+                        .font(.system(size: 11.5)).foregroundStyle(Palette.ink3).lineLimit(1)
                 }
-                Button { controller.exportStudy() } label: { Label("导出课堂笔记", systemImage: "square.and.arrow.up") }
-                    .labelStyle(.iconOnly).buttonStyle(.borderless)
+                Button { controller.exportStudy() } label: { Image(systemName: "square.and.arrow.up").font(.system(size: 13)) }
+                    .buttonStyle(QuietButtonStyle())
                     .disabled(!messages.contains { $0.state == "complete" })
-                    .help("导出课堂笔记（Markdown）")
-            }
-            HStack(alignment: .bottom, spacing: Spacing.s) {
-                TextField(hasTranscript ? "问问这堂课，例如：这两个概念有什么区别？" : "需要先有课堂转录", text: $question, axis: .vertical)
-                    .lineLimit(1...5).textFieldStyle(.plain).focused($composerFocused)
-                    .padding(.horizontal, Spacing.m + Spacing.xxs).padding(.vertical, Spacing.s + Spacing.xxs)
-                    .glassEffect(.regular, in: .rect(cornerRadius: Radius.bubble))
-                    .disabled(!hasTranscript)
+                    .help("导出课堂笔记（Markdown）").accessibilityLabel("导出课堂笔记")
                 Button(action: send) {
-                    Image(systemName: "arrow.up").font(.body.weight(.semibold)).frame(width: 18, height: 18)
+                    Image(systemName: "arrow.up").font(.system(size: 14, weight: .semibold))
                 }
-                .buttonStyle(.glassProminent).buttonBorderShape(.circle).controlSize(.large)
+                .buttonStyle(ClayButtonStyle(kind: .icon))
                 .keyboardShortcut(.return, modifiers: .command).disabled(!canSend)
                 .help("发送问题 ⌘↩").accessibilityLabel("发送问题")
             }
         }
-        .frame(maxWidth: Layout.readingWidth)
-        .padding(.horizontal, Spacing.l).padding(.vertical, Spacing.m)
+        .padding(.leading, Spacing.l).padding(.trailing, Spacing.s + Spacing.xxs).padding(.vertical, Spacing.m)
+        .surfaceCard(cornerRadius: 20)
+        .frame(maxWidth: Layout.readingWidth - 100)
+        .padding(.horizontal, Spacing.xl).padding(.top, Spacing.s).padding(.bottom, Spacing.l)
         .frame(maxWidth: .infinity)
     }
 
@@ -113,43 +115,48 @@ struct StudyMessageView: View {
         if message.role == "user" {
             HStack {
                 Spacer(minLength: 60)
-                Text(message.text).textSelection(.enabled)
-                    .padding(.horizontal, Spacing.m + Spacing.xxs).padding(.vertical, Spacing.s + Spacing.xxs)
-                    .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: Radius.bubble))
+                Text(message.text).font(.system(size: 14.5)).foregroundStyle(Palette.ink).lineSpacing(3).textSelection(.enabled)
+                    .padding(.horizontal, Spacing.l - Spacing.xxs).padding(.vertical, Spacing.s + Spacing.xxs)
+                    .background(Palette.bubble, in: RoundedRectangle(cornerRadius: Radius.bubble))
             }
         } else {
             VStack(alignment: .leading, spacing: Spacing.s) {
-                HStack(spacing: Spacing.s) {
-                    Image(systemName: "sparkles").foregroundStyle(.tint).accessibilityHidden(true)
-                    Text(message.action ?? "课堂助手").font(.callout.weight(.semibold))
+                HStack(spacing: Spacing.s - Spacing.xxs) {
+                    Image(systemName: StudyAction(rawValue: message.action ?? "")?.symbol ?? "sparkle")
+                        .font(.system(size: 11.5)).foregroundStyle(Palette.clay).accessibilityHidden(true)
+                    Text(message.action ?? "课堂助手").font(.system(size: 12, weight: .medium)).foregroundStyle(Palette.ink2)
                     Spacer()
-                    if let count = message.sourceCount { Text("基于 \(count) 段转录").font(.caption).foregroundStyle(.tertiary) }
+                    if let count = message.sourceCount { Text("基于 \(count) 段转录").font(.system(size: 11.5)).foregroundStyle(Palette.ink3) }
                 }
+                .padding(.bottom, Spacing.xxs)
                 switch message.state {
                 case "pending":
-                    HStack(spacing: Spacing.s) { ProgressView().controlSize(.small); Text(status).foregroundStyle(.secondary) }
+                    HStack(spacing: Spacing.s) { ProgressView().controlSize(.small); Text(status).foregroundStyle(Palette.ink2) }
                         .padding(.vertical, Spacing.s)
                 case "failed":
                     HStack(alignment: .firstTextBaseline, spacing: Spacing.m) {
                         Label(message.text, systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
-                        if message.request != nil { Button("重试", action: retry).disabled(busy) }
+                        if message.request != nil { Button("重试", action: retry).buttonStyle(GhostButtonStyle()).disabled(busy) }
                     }
                     .font(.callout)
                 default:
                     MarkdownReading(text: message.text)
-                    if !citations.isEmpty {
-                        ScrollView(.horizontal) {
-                            HStack(spacing: Spacing.s) {
-                                ForEach(citations, id: \.self) { time in
-                                    Button { showSource(time) } label: { Label(time, systemImage: "text.quote").monospacedDigit() }
-                                        .buttonStyle(.bordered).controlSize(.small)
-                                        .help("跳到 \(time) 的转录")
+                    ScrollView(.horizontal) {
+                        HStack(spacing: Spacing.s - Spacing.xxs) {
+                            ForEach(citations, id: \.self) { time in
+                                Button { showSource(time) } label: {
+                                    Label(time, systemImage: "text.quote").labelStyle(ComposerLabelStyle()).monospacedDigit()
+                                        .font(.system(size: 11.5)).frame(minHeight: 24)
                                 }
+                                .buttonStyle(GhostButtonStyle())
+                                .help("跳到 \(time) 的转录")
                             }
+                            CopyButton(text: { message.text }).font(.system(size: 11.5)).padding(.leading, Spacing.xs)
                         }
-                        .scrollIndicators(.hidden)
+                        .padding(.vertical, Spacing.xxs)
                     }
-                    CopyButton(text: { message.text }).font(.caption).foregroundStyle(.secondary)
+                    .scrollIndicators(.hidden)
+                    .padding(.top, Spacing.xs)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -167,7 +174,8 @@ struct MarkdownReading: View {
             }
         }
         .font(.system(size: 15))
-        .lineSpacing(4)
+        .foregroundStyle(Palette.ink)
+        .lineSpacing(5)
         .textSelection(.enabled)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -176,16 +184,16 @@ struct MarkdownReading: View {
         switch block {
         case .heading(let level, let text):
             Text(Self.inline(text))
-                .font(level == 1 ? .title2.weight(.semibold) : level == 2 ? .title3.weight(.semibold) : .headline)
-                .padding(.top, Spacing.xs)
+                .font(level == 1 ? .display(21) : level == 2 ? .display(17) : .system(size: 14.5, weight: .semibold))
+                .padding(.top, level == 1 ? Spacing.xs : Spacing.s)
         case .bullet(let text, let depth):
             listItem(marker: "•", text: text, depth: depth)
         case .numbered(let marker, let text, let depth):
             listItem(marker: marker, text: text, depth: depth)
         case .quote(let text):
-            Text(Self.inline(text)).foregroundStyle(.secondary)
+            Text(Self.inline(text)).foregroundStyle(Palette.ink2)
                 .padding(.leading, Spacing.m)
-                .overlay(alignment: .leading) { Capsule().fill(.quaternary).frame(width: 3) }
+                .overlay(alignment: .leading) { Capsule().fill(Palette.hairlineStrong).frame(width: 2) }
         case .table(let rows):
             MarkdownTable(rows: rows)
         case .rule:
@@ -197,7 +205,7 @@ struct MarkdownReading: View {
 
     private func listItem(marker: String, text: String, depth: Int) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: Spacing.s) {
-            Text(marker).monospacedDigit().foregroundStyle(.secondary)
+            Text(marker).monospacedDigit().foregroundStyle(Palette.ink3)
             Text(Self.inline(text)).fixedSize(horizontal: false, vertical: true)
         }
         .padding(.leading, CGFloat(depth) * Spacing.l)
@@ -212,19 +220,32 @@ struct MarkdownTable: View {
     let rows: [[String]]
     var body: some View {
         let columns = rows.map(\.count).max() ?? 0
-        Grid(alignment: .leading, horizontalSpacing: Spacing.l, verticalSpacing: Spacing.s) {
+        Grid(alignment: .leading, horizontalSpacing: Spacing.l + Spacing.xs, verticalSpacing: Spacing.s + Spacing.xxs) {
             ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
                 GridRow {
                     ForEach(0..<columns, id: \.self) { column in
                         Text(MarkdownReading.inline(column < row.count ? row[column] : ""))
-                            .fontWeight(index == 0 ? .semibold : nil)
+                            .font(index == 0 ? .system(size: 12.5, weight: .semibold) : column == 0 ? .french(14.5) : .system(size: 14))
+                            .foregroundStyle(index == 0 ? Palette.ink2 : Palette.ink)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
-                if index == 0 && rows.count > 1 { Divider().gridCellUnsizedAxes(.horizontal) }
+                if index < rows.count - 1 {
+                    Rectangle().fill(index == 0 ? Palette.hairlineStrong : Palette.hairline).frame(height: 0.5)
+                        .gridCellUnsizedAxes(.horizontal)
+                }
             }
         }
-        .padding(Spacing.m)
-        .background(Color.secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: Radius.small))
+        .padding(.vertical, Spacing.xs)
+    }
+}
+
+/// Icon and title close together, icon a step smaller, for compact controls.
+struct ComposerLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: Spacing.xs + Spacing.xxs) {
+            configuration.icon.font(.system(size: 11))
+            configuration.title
+        }
     }
 }

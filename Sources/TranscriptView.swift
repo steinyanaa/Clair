@@ -6,6 +6,7 @@ struct TranscriptPane: View {
     let runtime: ModelRuntime
     @Binding var jumpToLine: String?
     let followsLatest: Bool
+    @AppStorage("wordLookup") private var wordLookup = true
     /// Follows new captions until the reader scrolls up; reaching the end resumes it.
     @State private var following = true
     @State private var userScrolling = false
@@ -19,6 +20,8 @@ struct TranscriptPane: View {
         guard let last = lines.last else { return "" }
         return "\(lines.count)|\(last.id)|\(last.revision)|\(last.chinese.count)"
     }
+    /// A new class starts from the centred composer; the dock takes over once captions exist.
+    private var composerHoldsControls: Bool { lines.isEmpty && controller.captureState == .idle }
     private var showsJumpButton: Bool { followsLatest && !following && controller.isRecording && !lines.isEmpty }
 
     var body: some View {
@@ -34,8 +37,9 @@ struct TranscriptPane: View {
                             TranscriptRow(line: line, showFrench: controller.showFrench, fontSize: controller.fontSize,
                                           markUncertain: controller.markUncertain,
                                           isPending: controller.isPending(line.id), highlighted: highlighted == line.id,
-                                          editable: controller.session.deletedAt == nil,
-                                          retranslate: { controller.retranslate(line.id) })
+                                          editable: controller.session.deletedAt == nil, lookupEnabled: wordLookup,
+                                          retranslate: { controller.retranslate(line.id) },
+                                          lookup: { try await controller.lookUp($0, lemma: $1, in: $2, range: $3) })
                                 .equatable()
                                 .id(line.id)
                                 .transition(Motion.arrival(reduced: reduceMotion))
@@ -71,15 +75,27 @@ struct TranscriptPane: View {
                     Button {
                         following = true
                         withAnimation(Motion.state(reduced: reduceMotion)) { reader.scrollTo(bottomID, anchor: .bottom) }
-                    } label: { Label("最新字幕", systemImage: "arrow.down") }
-                    .buttonStyle(.glass)
+                    } label: { Label("最新字幕", systemImage: "arrow.down").padding(.horizontal, Spacing.xs) }
+                    .buttonStyle(GhostButtonStyle(selected: true))
+                    .background(Palette.surface, in: RoundedRectangle(cornerRadius: 8))
+                    .shadow(color: .black.opacity(0.08), radius: 8, y: 3)
                     .padding(.bottom, Spacing.s)
                     .transition(Motion.edge(.bottom, reduced: reduceMotion))
                     .help("回到最新字幕并继续跟随")
                 }
             }
             .animation(Motion.enter(reduced: reduceMotion), value: showsJumpButton)
-            .safeAreaBar(edge: .bottom) { TransportBar(controller: controller, runtime: runtime) }
+            .safeAreaBar(edge: .bottom) {
+                // Pressing start hands the controls to the dock once; it rises from where the status sat.
+                Group {
+                    if composerHoldsControls {
+                        ModelStatus(runtime: runtime).padding(.bottom, Spacing.l).transition(.opacity)
+                    } else {
+                        TransportBar(controller: controller, runtime: runtime).transition(Motion.edge(.bottom, reduced: reduceMotion))
+                    }
+                }
+                .animation(Motion.state(reduced: reduceMotion), value: composerHoldsControls)
+            }
         }
     }
 
@@ -99,19 +115,22 @@ struct TranscriptPane: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: Spacing.xxl) {
-            VStack(spacing: Spacing.s) {
-                Text("这节课讲什么？").font(.largeTitle.weight(.semibold))
-                Text("选好学科，翻译会使用对应领域的术语，并结合上下文理解每一句。")
-                    .font(.title3).foregroundStyle(.secondary).multilineTextAlignment(.center)
-            }
-            PresetEditor(controller: controller)
+        VStack(spacing: 0) {
+            Image(systemName: "waveform").font(.system(size: 26, weight: .medium)).foregroundStyle(Palette.clay)
+                .padding(.bottom, Spacing.l).accessibilityHidden(true)
+            Text("这节课讲什么？").font(.display(32)).foregroundStyle(Palette.ink)
+            Text("选好学科，翻译会使用对应领域的术语，并结合上下文理解每一句。")
+                .font(.system(size: 14.5)).foregroundStyle(Palette.ink2).multilineTextAlignment(.center)
+                .padding(.top, Spacing.s + Spacing.xxs)
+            PresetEditor(controller: controller, showsStart: composerHoldsControls).padding(.top, Spacing.xxl + Spacing.xs)
             HStack(spacing: Spacing.xs) {
-                Text("准备好后点下方「开始听课」，或")
-                Button("导入音频…") { WindowCommand.importAudio.send() }.buttonStyle(.link)
+                Text("也可以")
+                Button("导入一段音频…") { WindowCommand.importAudio.send() }.buttonStyle(.plain).foregroundStyle(Palette.clayInk)
                     .disabled(controller.locked || controller.session.deletedAt != nil)
+                Text("或把音频文件拖进窗口")
             }
-            .font(.callout).foregroundStyle(.secondary)
+            .font(.system(size: 12.5)).foregroundStyle(Palette.ink3)
+            .padding(.top, Spacing.xl)
         }
         .frame(maxWidth: 640)
         .padding(.horizontal, Spacing.xxl)
@@ -127,27 +146,17 @@ struct TranscriptRow: View, Equatable {
     let isPending: Bool
     let highlighted: Bool
     let editable: Bool
+    let lookupEnabled: Bool
     let retranslate: () -> Void
+    let lookup: @MainActor (String, String?, String, NSRange) async throws -> WordMeaning
     @State private var hovering = false
 
     nonisolated static func == (a: Self, b: Self) -> Bool {
         a.line == b.line && a.showFrench == b.showFrench && a.fontSize == b.fontSize && a.markUncertain == b.markUncertain &&
-            a.isPending == b.isPending && a.highlighted == b.highlighted && a.editable == b.editable
+            a.isPending == b.isPending && a.highlighted == b.highlighted && a.editable == b.editable && a.lookupEnabled == b.lookupEnabled
     }
 
     private var doubtLabel: String { "这一句识别可能有误 · \(TranscriptRules.markedWords(line).count) 个词存疑" }
-    /// Underlines uncertain words in reading order, so a repeated word is marked only where it was doubtful.
-    static func marked(_ text: String, uncertain: [String]) -> AttributedString {
-        var result = AttributedString(text)
-        var cursor = result.startIndex
-        for word in uncertain {
-            guard let range = result[cursor...].range(of: word, options: .caseInsensitive) else { continue }
-            result[range][AttributeScopes.SwiftUIAttributes.UnderlineStyleAttribute.self] = Text.LineStyle(pattern: .dot, color: .orange)
-            result[range][AttributeScopes.SwiftUIAttributes.ForegroundColorAttribute.self] = .orange
-            cursor = range.upperBound
-        }
-        return result
-    }
     private var isFallback: Bool { line.backend == TranscriptRules.fallbackBackend }
     private var sourceHelp: String {
         guard !line.backend.isEmpty else { return "" }
@@ -157,18 +166,18 @@ struct TranscriptRow: View, Equatable {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: Spacing.m) {
             Text(TranscriptRules.timecode(line.start))
-                .font(.caption2.monospacedDigit()).foregroundStyle(.tertiary)
+                .font(.caption2.monospacedDigit()).foregroundStyle(Palette.ink3)
                 .frame(width: Layout.timecodeWidth, alignment: .trailing)
                 .opacity(hovering || highlighted ? 1 : 0)
             VStack(alignment: .leading, spacing: Spacing.xs + Spacing.xxs) {
                 if showFrench {
-                    Text(Self.marked(line.french, uncertain: markUncertain ? TranscriptRules.markedWords(line) : []))
-                        .font(.system(size: max(13, fontSize * 0.7)))
-                        .foregroundStyle(line.isFinal ? .secondary : .tertiary).lineSpacing(3)
+                    FrenchLine(text: line.french, uncertain: markUncertain ? TranscriptRules.markedWords(line) : [],
+                               size: max(13, (fontSize * 0.76).rounded()), settled: line.isFinal,
+                               lookupEnabled: lookupEnabled, lookup: lookup)
                 }
                 if markUncertain, TranscriptRules.isDoubtful(line) {
                     Label(doubtLabel, systemImage: "waveform.badge.exclamationmark")
-                        .font(.caption).foregroundStyle(.orange)
+                        .font(.caption).foregroundStyle(Palette.clayInk)
                         .help("背景人声、回声、停顿或距离过远时识别容易出错，橙色虚线标出的是识别把握较低的词。这一句的原文和译文请对照原声核对。")
                 }
                 translation
@@ -179,7 +188,7 @@ struct TranscriptRow: View, Equatable {
         .padding(.vertical, Spacing.m).padding(.trailing, Spacing.m)
         .background {
             RoundedRectangle(cornerRadius: Radius.medium)
-                .fill(Color.accentColor.opacity(highlighted ? 0.12 : 0))
+                .fill(Palette.claySoft.opacity(highlighted ? 1 : 0))
                 .padding(.leading, Layout.timecodeWidth)
         }
         .onHover { hovering = $0 }
@@ -196,13 +205,13 @@ struct TranscriptRow: View, Equatable {
 
     @ViewBuilder private var translation: some View {
         if !line.chinese.isEmpty {
-            Text(line.chinese).font(.system(size: fontSize)).lineSpacing(6).help(sourceHelp)
+            Text(line.chinese).font(.system(size: fontSize)).foregroundStyle(Palette.ink).lineSpacing(6).help(sourceHelp)
             if isFallback || isPending {
                 HStack(spacing: Spacing.xs) {
                     if isPending { ProgressView().controlSize(.mini); Text(isFallback ? "正在用 Gemma 改进译文…" : "正在重新翻译…") }
                     else { Image(systemName: "arrow.triangle.2.circlepath"); Text(line.backend) }
                 }
-                .font(.caption).foregroundStyle(isPending ? Color.secondary : Color.orange)
+                .font(.system(size: 12)).foregroundStyle(Palette.ink3)
             }
         } else if isPending || !line.isFinal {
             TypingIndicator(label: line.isFinal ? "正在翻译" : "正在识别")
@@ -211,11 +220,13 @@ struct TranscriptRow: View, Equatable {
                 if let error = line.error {
                     Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
                 } else {
-                    Text("尚未翻译").foregroundStyle(.secondary)
+                    Text("尚未翻译").foregroundStyle(Palette.ink3)
                 }
-                if editable { Button(line.error == nil ? "翻译" : "重试", action: retranslate).buttonStyle(.link) }
+                if editable {
+                    Button(line.error == nil ? "翻译" : "重试", action: retranslate).buttonStyle(.plain).foregroundStyle(Palette.clayInk)
+                }
             }
-            .font(.caption)
+            .font(.system(size: 12))
         }
     }
 
@@ -225,46 +236,22 @@ struct TranscriptRow: View, Equatable {
     }
 }
 
-/// One floating glass capsule, centred over the captions. Status text appears
-/// above it only when something needs attention.
+/// One floating capsule, centred over the captions, with the model status beneath.
 struct TransportBar: View {
     @Bindable var controller: ClassController
     let runtime: ModelRuntime
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        VStack(spacing: Spacing.s) {
-            GlassEffectContainer(spacing: Spacing.s) {
-                HStack(spacing: Spacing.s) { controls }
-                    .controlSize(.large)
-            }
-            statusLine
+        VStack(spacing: Spacing.s + Spacing.xxs) {
+            HStack(spacing: Spacing.xs + Spacing.xxs) { controls }
+                .padding(Spacing.xs + Spacing.xxs)
+                .surfaceCard(cornerRadius: 23)
+            ModelStatus(runtime: runtime, notices: notices)
         }
         .frame(maxWidth: .infinity)
-        .padding(.horizontal, Spacing.l).padding(.vertical, Spacing.m)
+        .padding(.horizontal, Spacing.l).padding(.top, Spacing.s).padding(.bottom, Spacing.l)
         .animation(Motion.state(reduced: reduceMotion), value: controller.captureState)
-    }
-
-    /// Always shows whether the translation model is ready, plus anything else
-    /// worth knowing right now (preparing, paused, improving fallback lines).
-    private var statusLine: some View {
-        HStack(spacing: Spacing.xs + Spacing.xxs) {
-            if runtime.busy {
-                ProgressView().controlSize(.mini)
-            } else {
-                Circle().fill(runtime.ready ? Color.green : Color.orange).frame(width: 6, height: 6)
-            }
-            Text(([modelText] + notices).joined(separator: " · ")).lineLimit(1)
-        }
-        .font(.caption).foregroundStyle(.secondary)
-        .help(runtime.ready ? "翻译在本机运行，语音和课堂内容不会上传" : runtime.status)
-        .accessibilityElement(children: .combine)
-    }
-
-    private var modelText: String {
-        guard runtime.ready else { return runtime.status }
-        let title = ModelOption.translation.first { $0.id == LocalModel.name }?.title ?? "Gemma"
-        return title + " 已就绪"
     }
 
     private var notices: [String] {
@@ -282,60 +269,111 @@ struct TransportBar: View {
     @ViewBuilder private var controls: some View {
         switch controller.captureState {
         case .idle, .starting:
-            sourcePicker
-            Button { Task { await controller.start() } } label: {
-                if controller.isStarting {
-                    HStack(spacing: Spacing.s) { ProgressView().controlSize(.small); Text("准备中") }
-                } else {
-                    Label("开始听课", systemImage: "record.circle")
-                }
-            }
-            .buttonStyle(.glassProminent)
-            .disabled(!controller.canToggleCapture)
-            .help("开始听课 ⌘R")
+            SourceMenu(controller: controller)
+            StartButton(controller: controller)
         case .recording, .paused, .stopping:
-            HStack(spacing: Spacing.s) {
-                Circle().fill(controller.isPaused ? Color.secondary : Color.red).frame(width: 7, height: 7)
+            HStack(spacing: Spacing.s + Spacing.xxs) {
+                Circle().fill(controller.isPaused ? Palette.ink3 : Palette.clay).frame(width: 7, height: 7)
+                    .background(Circle().fill(Palette.claySoft).frame(width: 13, height: 13).opacity(controller.isPaused ? 0 : 1))
                     .accessibilityHidden(true)
-                Text(TranscriptRules.timecode(controller.displayDuration)).font(.body.monospacedDigit().weight(.medium))
+                Text(TranscriptRules.timecode(controller.displayDuration)).font(.system(size: 14, weight: .medium).monospacedDigit())
+                    .foregroundStyle(Palette.ink)
                 LiveWaveform(controller: controller, paused: controller.isPaused)
             }
-            .padding(.horizontal, Spacing.l).frame(height: 36)
-            .glassEffect()
+            .padding(.leading, Spacing.m).padding(.trailing, Spacing.s)
             .accessibilityElement(children: .combine)
+            Rectangle().fill(Palette.hairlineStrong).frame(width: 0.5, height: 20).padding(.horizontal, Spacing.xs)
             Button { Task { await controller.toggleCapture() } } label: {
-                Image(systemName: controller.isPaused ? "play.fill" : "pause.fill").frame(width: 18)
+                Image(systemName: controller.isPaused ? "play.fill" : "pause.fill").contentTransition(.symbolEffect(.replace))
             }
-            .buttonStyle(.glass).buttonBorderShape(.circle).disabled(!controller.canToggleCapture)
+            .buttonStyle(CircleControlStyle()).disabled(!controller.canToggleCapture)
             .help(controller.isPaused ? "继续听课 ⌘R" : "暂停 ⌘R")
             .accessibilityLabel(controller.isPaused ? "继续" : "暂停")
-            Button { Task { await controller.stop() } } label: { Image(systemName: "stop.fill").frame(width: 18) }
-                .buttonStyle(.glass).buttonBorderShape(.circle).disabled(controller.isStopping)
+            Button { Task { await controller.stop() } } label: { Image(systemName: "stop.fill") }
+                .buttonStyle(CircleControlStyle(filled: true)).disabled(controller.isStopping)
                 .help("结束并保存 ⌘.").accessibilityLabel("结束")
         case .importing:
             HStack(spacing: Spacing.s) {
                 ProgressView().controlSize(.small)
                 Text("正在转写音频 · " + TranscriptRules.timecode(controller.displayDuration)).monospacedDigit()
+                    .foregroundStyle(Palette.ink)
             }
-            .padding(.horizontal, Spacing.l).frame(height: 36).glassEffect()
-            Button { Task { await controller.stop() } } label: { Image(systemName: "stop.fill").frame(width: 18) }
-                .buttonStyle(.glass).buttonBorderShape(.circle).help("停止导入，保留已转写的内容").accessibilityLabel("停止转写")
+            .padding(.horizontal, Spacing.m)
+            Button { Task { await controller.stop() } } label: { Image(systemName: "stop.fill") }
+                .buttonStyle(CircleControlStyle(filled: true)).help("停止导入，保留已转写的内容").accessibilityLabel("停止转写")
         }
     }
+}
 
-    private var sourcePicker: some View {
+/// Whether the translation model is ready, plus anything worth knowing right now.
+struct ModelStatus: View {
+    let runtime: ModelRuntime
+    var notices: [String] = []
+
+    var body: some View {
+        HStack(spacing: Spacing.xs + Spacing.xxs) {
+            if runtime.busy {
+                ProgressView().controlSize(.mini)
+            } else {
+                Circle().fill(runtime.ready ? Palette.ready : Color.orange).frame(width: 6, height: 6)
+            }
+            Text(([modelText] + notices).joined(separator: " · ")).lineLimit(1)
+        }
+        .font(.system(size: 11.5)).foregroundStyle(Palette.ink3)
+        .help(runtime.ready ? "翻译在本机运行，语音和课堂内容不会上传" : runtime.status)
+        .accessibilityElement(children: .combine)
+    }
+
+    private var modelText: String {
+        guard runtime.ready else { return runtime.status }
+        let title = ModelOption.translation.first { $0.id == LocalModel.name }?.title ?? "Gemma"
+        return title + " 已就绪"
+    }
+}
+
+struct SourceMenu: View {
+    @Bindable var controller: ClassController
+
+    var body: some View {
         Menu {
             Picker("音源", selection: $controller.source) {
                 ForEach(AudioSource.allCases) { source in Label(source.rawValue, systemImage: source.symbol).tag(source) }
             }
             .pickerStyle(.inline)
         } label: {
-            Label(controller.source.rawValue, systemImage: controller.source.symbol)
+            HStack(spacing: Spacing.xs + Spacing.xxs) {
+                Image(systemName: controller.source.symbol).font(.system(size: 11))
+                Text(controller.source.rawValue)
+                Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold)).foregroundStyle(Palette.ink3)
+            }
+            .frame(minHeight: 32)
         }
-        .buttonStyle(.glass)
+        .menuStyle(.button).menuIndicator(.hidden)
+        .buttonStyle(GhostButtonStyle())
         .fixedSize()
         .disabled(controller.locked || controller.session.deletedAt != nil)
         .help("音源：麦克风用于现场课堂，系统声音用于视频和网课")
+    }
+}
+
+struct StartButton: View {
+    let controller: ClassController
+
+    var body: some View {
+        Button { Task { await controller.start() } } label: {
+            HStack(spacing: Spacing.s - Spacing.xxs) {
+                if controller.isStarting {
+                    ProgressView().controlSize(.small).tint(.white)
+                    Text("准备中")
+                } else {
+                    Circle().fill(.white).frame(width: 8, height: 8)
+                    Text(controller.startTitle)
+                }
+            }
+        }
+        .buttonStyle(ClayButtonStyle())
+        .disabled(!controller.canToggleCapture)
+        .help(controller.startTitle == "继续听课" ? "接着记录在这堂课里 ⌘R" : "开始听课 ⌘R")
     }
 }
 
@@ -353,7 +391,7 @@ struct LiveWaveform: View {
                 let height = max(bar, value * size.height)
                 let rect = CGRect(x: CGFloat(index) * (bar + gap), y: (size.height - height) / 2, width: bar, height: height)
                 let fade = 0.35 + 0.65 * CGFloat(index) / CGFloat(history.count - 1)
-                context.fill(Path(roundedRect: rect, cornerRadius: bar / 2), with: .color(.accentColor.opacity(paused ? 0.25 : fade)))
+                context.fill(Path(roundedRect: rect, cornerRadius: bar / 2), with: .color(Palette.clay.opacity(paused ? 0.25 : fade)))
             }
         }
         .frame(width: 96, height: 18)
@@ -371,7 +409,7 @@ struct TypingIndicator: View {
     var body: some View {
         Image(systemName: "ellipsis")
             .font(.title3.weight(.semibold))
-            .foregroundStyle(.tertiary)
+            .foregroundStyle(Palette.ink3)
             .symbolEffect(.variableColor.iterative.dimInactiveLayers, options: .repeating)
             .accessibilityLabel(label)
             .help(label)
@@ -388,14 +426,15 @@ struct ClassHeader: View {
     }
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.s) {
-            Text(session.title).font(.largeTitle.weight(.semibold)).textSelection(.enabled)
+            Text(session.title).font(.display(30)).foregroundStyle(Palette.ink).textSelection(.enabled)
             HStack(spacing: Spacing.m) {
                 PresetTag(controller: controller)
-                Text(meta).font(.callout).monospacedDigit().foregroundStyle(.tertiary)
+                Text(meta).font(.system(size: 12.5)).monospacedDigit().foregroundStyle(Palette.ink3)
             }
+            .padding(.top, Spacing.xs)
         }
         .padding(.leading, Layout.timecodeWidth + Spacing.m)
-        .padding(.bottom, Spacing.xl)
+        .padding(.bottom, Spacing.xxl)
         .accessibilityElement(children: .contain)
         .accessibilityAddTraits(.isHeader)
     }
