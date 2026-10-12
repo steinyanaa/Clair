@@ -1,10 +1,10 @@
-# ClairClass · 法语听课助手
+# Clair · 法语听课助手
 
 **macOS 上完全本机运行的法语 → 简体中文课堂实时字幕。**
 
 [English](README.md)
 
-ClairClass 用麦克风（现场课堂）或系统声音（网课、视频）听课，用 Apple 本机语音识别转写法语，再用本地 TranslateGemma 模型逐句翻译成简体中文。课后可用本地 Gemma 模型整理笔记、生成纪要、提取术语表或回答问题，回答中的时间点可以跳回原句。所有内容都不上传云端。
+Clair（原名 ClairClass）用麦克风（现场课堂）或系统声音（网课、视频）听课，用 Apple 本机语音识别转写法语，再用本地 TranslateGemma 模型逐句翻译成简体中文。课后可用本地 Gemma 模型整理笔记、生成纪要、提取术语表或回答问题，回答中的时间点可以跳回原句。所有内容都不上传云端。
 
 ![转录（浅色）](docs/images/transcript-light.png)
 
@@ -34,8 +34,8 @@ ClairClass 用麦克风（现场课堂）或系统声音（网课、视频）听
 git clone https://github.com/steinyanaa/ClairClass.git
 cd ClairClass
 scripts/fetch-runtime.sh      # 下载官方 Ollama 运行时（约 170 MB）并校验签名
-scripts/build.sh              # 生成 dist/ClairClass.app
-open dist/ClairClass.app
+scripts/build.sh              # 生成 dist/Clair.app
+open dist/Clair.app
 ```
 
 首次打开后，在 **设置 → 本地模型** 中下载翻译模型和课堂助手模型。第一次使用麦克风或系统声音时，macOS 会请求相应权限。
@@ -65,4 +65,4 @@ scripts/test.sh --study                  # 课堂助手测试，需要课堂助�
 
 ## 许可证
 
-ClairClass 以 [MIT 许可证](LICENSE) 发布。内置的 Ollama 运行时和可下载的 Gemma 模型各有其许可条款，见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。模型输出可能出错，请始终对照转录核对译文和笔记。
+Clair 以 [MIT 许可证](LICENSE) 发布。内置的 Ollama 运行时和可下载的 Gemma 模型各有其许可条款，见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。模型输出可能出错，请始终对照转录核对译文和笔记。

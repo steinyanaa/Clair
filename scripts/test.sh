@@ -9,9 +9,9 @@ root="${0:A:h:h}"
 build="$root/.build"
 mkdir -p "$build"
 xcrun swiftc -swift-version 5 -parse-as-library -O -target arm64-apple-macos26.0 \
-  -module-name ClairClassTests -module-cache-path "$build/module-cache" \
+  -module-name ClairTests -module-cache-path "$build/module-cache" \
   "$root/Sources/Audio.swift" "$root/Sources/Session.swift" "$root/Sources/Translation.swift" \
   "$root/Sources/Library.swift" "$root/Sources/Study.swift" "$root/Sources/Models.swift" \
-  "$root/Tests/TestMain.swift" -o "$build/ClairClassTests"
-codesign --force --sign - --options runtime "$build/ClairClassTests"
-exec "$build/ClairClassTests" "$@"
+  "$root/Tests/TestMain.swift" -o "$build/ClairTests"
+codesign --force --sign - --options runtime "$build/ClairTests"
+exec "$build/ClairTests" "$@"

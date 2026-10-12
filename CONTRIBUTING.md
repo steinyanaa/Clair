@@ -1,4 +1,4 @@
-# Contributing to ClairClass
+# Contributing to Clair
 
 Thanks for helping. Bug reports, translations of the docs, and pull requests are all welcome.
 
@@ -20,7 +20,7 @@ There is no Xcode project; the scripts call `swiftc` directly. Requirements: App
 For interface checks, run the app against throw-away data instead of your own library:
 
 ```sh
-open dist/ClairClass.app --args -ClairClassDataRoot /tmp/clairclass-fixture -ClairClassUITestPane assistant
+open dist/Clair.app --args -ClairClassDataRoot /tmp/clairclass-fixture -ClairClassUITestPane assistant
 ```
 
 ## Code style

@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Downloads the official Ollama macOS runtime that ClairClass bundles for local
+# Downloads the official Ollama macOS runtime that Clair bundles for local
 # inference, verifies Ollama's code signature and unpacks it into ./runtime.
 #   scripts/fetch-runtime.sh                     download the pinned release
 #   CLAIRCLASS_RUNTIME_ARCHIVE=path/to.tgz ...   use an archive you already have

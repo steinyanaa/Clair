@@ -1,10 +1,10 @@
-# ClairClass
+# Clair
 
 **Live French → Simplified Chinese lecture captions for macOS, fully on-device.**
 
 [简体中文](README.zh-CN.md)
 
-ClairClass (法语听课助手) listens to a lecture — from the microphone in a classroom or from your Mac's system audio for online courses and videos — transcribes the French with Apple's on-device speech recogniser and translates every sentence into Simplified Chinese with a local TranslateGemma model. After class, a local Gemma model turns the transcript into study notes, minutes, a term glossary or answers to your questions, with timestamps that jump back to the source sentence. Nothing is sent to a cloud service.
+Clair (法语听课助手, formerly ClairClass) listens to a lecture — from the microphone in a classroom or from your Mac's system audio for online courses and videos — transcribes the French with Apple's on-device speech recogniser and translates every sentence into Simplified Chinese with a local TranslateGemma model. After class, a local Gemma model turns the transcript into study notes, minutes, a term glossary or answers to your questions, with timestamps that jump back to the source sentence. Nothing is sent to a cloud service.
 
 ![Transcript, light appearance](docs/images/transcript-light.png)
 
@@ -34,8 +34,8 @@ ClairClass (法语听课助手) listens to a lecture — from the microphone in 
 git clone https://github.com/steinyanaa/ClairClass.git
 cd ClairClass
 scripts/fetch-runtime.sh      # official Ollama runtime (~170 MB), signature-checked
-scripts/build.sh              # → dist/ClairClass.app
-open dist/ClairClass.app
+scripts/build.sh              # → dist/Clair.app
+open dist/Clair.app
 ```
 
 On first launch open **Settings → 本地模型 (Local models)** and download a translation model and an assistant model. macOS asks for microphone or screen & system audio recording permission the first time you use each source.
@@ -75,4 +75,4 @@ Issues and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-ClairClass is released under the [MIT License](LICENSE). The bundled Ollama runtime and the downloadable Gemma models have their own licenses; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Model output can be wrong — always check translations and notes against the transcript.
+Clair is released under the [MIT License](LICENSE). The bundled Ollama runtime and the downloadable Gemma models have their own licenses; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Model output can be wrong — always check translations and notes against the transcript.

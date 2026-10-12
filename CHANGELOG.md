@@ -4,10 +4,14 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.3.1] - 2026-10-12
 
 ### Changed
-- New app icon: the “clair” wordmark on a white rounded square. The icon is now built from `Resources/AppIcon.png` instead of being drawn in code.
+- The app is now called **Clair** (previously ClairClass): app name, window title, menus, permission prompts, `Clair.app` and the DMG name.
+- New app icon: the “clair” wordmark on a white rounded square, built from `Resources/AppIcon.png` instead of being drawn in code.
+
+### Notes
+- The bundle identifier (`local.clairclass.mac`) and the data folder (`~/Library/Application Support/ClairClass/`) are unchanged, so existing classes, settings and permissions carry over.
 
 ## [0.3.0] - 2026-10-12
 

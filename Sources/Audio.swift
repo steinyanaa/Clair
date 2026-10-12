@@ -162,7 +162,7 @@ final class SpeechCapture {
                failure: @escaping @MainActor @Sendable (String) -> Void) async throws {
         if source == .microphone {
             let allowed = await AVCaptureDevice.requestAccess(for: .audio)
-            guard allowed else { throw AppError("请在系统设置 → 隐私与安全性 → 麦克风中允许「法语听课助手」。") }
+            guard allowed else { throw AppError("请在系统设置 → 隐私与安全性 → 麦克风中允许「Clair」。") }
         }
         try await setup(event: event, meter: meter, failure: failure)
         guard let sink else { throw AppError("语音识别尚未准备好。") }
@@ -179,7 +179,7 @@ final class SpeechCapture {
             } else {
                 let content: SCShareableContent
                 do { content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true) }
-                catch { throw AppError("请在系统设置 → 隐私与安全性 → 屏幕与系统音频录制中允许「法语听课助手」，然后重新打开 App。") }
+                catch { throw AppError("请在系统设置 → 隐私与安全性 → 屏幕与系统音频录制中允许「Clair」，然后重新打开 App。") }
                 guard let display = content.displays.first else { throw AppError("未找到可采集声音的显示器。") }
                 let filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
                 let configuration = SCStreamConfiguration()

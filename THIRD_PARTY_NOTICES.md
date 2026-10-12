@@ -1,6 +1,6 @@
 # Third-Party Notices
 
-ClairClass's own source code is MIT-licensed (see [LICENSE](LICENSE)). The repository
+Clair's own source code is MIT-licensed (see [LICENSE](LICENSE)). The repository
 contains no third-party code or model weights. The components below are fetched at
 build time or downloaded by the user, and keep their own licenses.
 
@@ -22,12 +22,12 @@ copies into the app bundle together with the license files it ships:
 | DLPack | Apache License 2.0 (`DLPACK_LICENSE`) |
 | XGrammar | Apache License 2.0 (`XGRAMMAR_LICENSE`, `XGRAMMAR_NOTICE`) |
 
-The license texts are inside the app at `ClairClass.app/Contents/Resources/Ollama/`.
+The license texts are inside the app at `Clair.app/Contents/Resources/Ollama/`.
 
 ## Downloaded on request: models
 
 Models are downloaded from the official Ollama registry only when the user chooses
-them in Settings. They are not distributed with ClairClass.
+them in Settings. They are not distributed with Clair.
 
 - **TranslateGemma** and **Gemma 3** are provided by Google under the
   [Gemma Terms of Use](https://ai.google.dev/gemma/terms) and the

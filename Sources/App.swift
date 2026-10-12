@@ -37,7 +37,7 @@ struct ClairClassApp: App {
     @State private var controller = ClassController()
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     var body: some Scene {
-        Window("法语听课助手", id: "main") {
+        Window("Clair", id: "main") {
             ClassWindow(controller: controller, runtime: controller.runtime)
                 .frame(minWidth: 1000, minHeight: 640)
                 .task { delegate.controller = controller; await controller.initialize() }
@@ -125,7 +125,7 @@ struct ClairCommands: Commands {
             Button("搜索命令…") { WindowCommand.palette.send() }.keyboardShortcut("k")
         }
         CommandGroup(replacing: .help) {
-            Button("法语听课助手使用说明") {
+            Button("Clair 使用说明") {
                 if let url = Bundle.main.url(forResource: "使用说明", withExtension: "txt") { NSWorkspace.shared.open(url) }
             }
         }

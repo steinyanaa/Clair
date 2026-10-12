@@ -1,14 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-<key>CFBundleName</key><string>ClairClass</string>
-<key>CFBundleDisplayName</key><string>法语听课助手</string>
+<key>CFBundleName</key><string>Clair</string>
+<key>CFBundleDisplayName</key><string>Clair</string>
 <key>CFBundleIdentifier</key><string>local.clairclass.mac</string>
-<key>CFBundleExecutable</key><string>ClairClass</string>
-<key>CFBundleIconFile</key><string>ClairClass</string>
+<key>CFBundleExecutable</key><string>Clair</string>
+<key>CFBundleIconFile</key><string>Clair</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.3.0</string>
-<key>CFBundleVersion</key><string>3</string>
+<key>CFBundleShortVersionString</key><string>0.3.1</string>
+<key>CFBundleVersion</key><string>4</string>
 <key>LSMinimumSystemVersion</key><string>26.0</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>NSMicrophoneUsageDescription</key><string>收录你选择的课堂声音，用 Apple 本地语音模型转写法语。音频不上传。</string>
