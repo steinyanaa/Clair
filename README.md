@@ -11,6 +11,7 @@ Clair (法语听课助手, formerly ClairClass) listens to a lecture — from th
 ## Features
 
 - **Bilingual live captions** – French and Chinese side by side, from the microphone, system audio, or an imported audio file (drag a file onto the window).
+- **Class presets and context** – tell Clair what the class is about (literature, maths and science, economics, law…), add your own term list, and each sentence is translated with the subject and the previous sentences in mind.
 - **Whole-sentence translation** – when the speaker pauses mid-sentence the halves are joined before translating; fillers such as *euh* and stutters are left out of the translation input.
 - **Honest output** – lines that fell back to the system translator are labelled and re-translated with Gemma once the class is paused or over; words the recogniser was unsure of are underlined so you know what to check.
 - **Class assistant** – organised notes, minutes, glossaries (rendered as tables) and Q&A grounded in the transcript, with timestamp citations; export as Markdown.

@@ -215,6 +215,32 @@ struct TestMain {
             garbled.uncertainWords = ["étoiles", "ménage", "train", "loin"]
             try check(TranscriptRules.isDoubtful(garbled))
             printJSON(["sentenceRepair": "passed", "fillerCleanup": "passed", "continuationMerge": "passed", "uncertainMarks": "passed"])
+            // Presets and context: the plain prompt is unchanged; context goes in separate blocks.
+            let plain = LocalModel.prompt("Bonjour.")
+            try check(plain.hasSuffix("Please translate the following French text into Chinese:\n\n\nBonjour.") && !plain.contains("Previous sentences"))
+            var preset = ClassPreset(subject: .science, topic: " Algèbre linéaire ", glossary: "corps = 域\nbase → 碱\nligne sans séparateur\n = vide")
+            try check(preset.terms.map(\.source) == ["corps", "base"] && preset.label == "数理 · Algèbre linéaire" && !preset.isDefault)
+            let framed = LocalModel.prompt("Deux.", context: TranslationContext(preset: preset, previous: ["Combien de solutions ?"]))
+            try check(framed.contains("mathematics and physical sciences (Algèbre linéaire)") && framed.contains("corps → 域")
+                      && framed.contains("Previous sentences (context, not to be translated):\nCombien de solutions ?")
+                      && framed.hasSuffix("Please translate only the following French text into Chinese:\n\n\nDeux."))
+            preset = ClassPreset(); try check(preset.isDefault && LocalModel.contextBlocks(TranslationContext(preset: preset)).isEmpty)
+            let contextRoot = FileManager.default.temporaryDirectory.appendingPathComponent("ClairContextTest-" + UUID().uuidString)
+            defer { try? FileManager.default.removeItem(at: contextRoot) }
+            let lecture = ClassController(workspace: WorkspaceConfiguration(projectRoot: contextRoot.path))
+            lecture.newSession()
+            lecture.setPreset(ClassPreset(subject: .law, topic: "Droit constitutionnel"))
+            for (index, text) in ["Le Parlement a voté la loi en 1905.", "Euh.", "Elle sépare l'Église et l'État.", "Elle reste en vigueur."].enumerated() {
+                lecture.receive(SpeechEvent(start: Double(index * 5), duration: 3, text: text, isFinal: true), token: lecture.captureID)
+            }
+            let last = lecture.session.lines.last!.id
+            let context = lecture.translationContext(before: last)
+            try check(context.previous == ["Le Parlement a voté la loi en 1905.", "Elle sépare l'Église et l'État."] && context.preset.subject == .law,
+                      "Context should be the two previous sentences: \(context.previous)")
+            lecture.newSession()
+            try check(lecture.session.preset?.subject == .law, "A new class starts from the last preset")
+            lecture.shutdown()
+            printJSON(["classPresets": "passed", "translationContext": "passed"])
             if arguments.contains("--bench") { try benchmark() }
             try check(StudyContext.chunks(sample, limit: 20).allSatisfy { $0.count <= 20 })
             try check(StudyContext.citations("结论 [00:01]，虚构时间 [99:99]", session: sample) == ["00:01"])
@@ -241,6 +267,23 @@ struct TestMain {
                 printJSON(["studyMinutes": minutes, "studyAnswer": answer])
                 guard answer.contains("2.5"), answer.contains("3.75"), answer.contains("[00:18]"), !answer.contains("[00:09]") else { throw AppError("Study answer must preserve classroom numbers and cite real timestamps") }
                 printJSON(["studyModel": "passed", "minutes": minutes, "answer": answer])
+            }
+            if arguments.contains("--context") {
+                let law = ClassPreset(subject: .law), science = ClassPreset(subject: .science, glossary: "corps = 域\nbase = 碱")
+                let cases: [(String, TranslationContext, [String], [String])] = [
+                    ("Elle sépare l'Église et l'État.", TranslationContext(preset: law, previous: ["Le Parlement a voté la loi en 1905."]), ["它", "该法"], ["她"]),
+                    ("Deux.", TranslationContext(preset: science, previous: ["Combien de solutions a cette équation ?"]), ["两"], ["第二"]),
+                    ("Il ne s'applique que si la fonction est dérivable.", TranslationContext(preset: science, previous: ["Prenons le théorème de Rolle."]), ["它", "该定理"], ["他"]),
+                    ("Le corps des nombres réels est ordonné.", TranslationContext(preset: science), ["域"], []),
+                    ("On ajoute une base forte à la solution.", TranslationContext(preset: science), ["碱"], [])
+                ]
+                for (french, context, expected, forbidden) in cases {
+                    let result = try await LocalModel.generate(french, context: context)
+                    let good = expected.contains(where: result.text.contains) && !forbidden.contains(where: result.text.contains)
+                    printJSON(["french": french, "chinese": result.text, "seconds": result.seconds, "ok": good])
+                    guard good else { throw AppError("Context translation failed for: " + french) }
+                }
+                printJSON(["contextTranslation": "passed"])
             }
             if arguments.contains("--model") || arguments.contains("--quality") {
                 let coldStarted = Date()

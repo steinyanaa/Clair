@@ -42,6 +42,19 @@ pre-filter (white 0 dB 0.03 → 0.20, voices 0 dB 0.33 → 0.86, far field 0.59 
   re-translated with Gemma when the queue is idle. The model service restarted within
   3 s after being killed.
 
+## Class presets and context
+
+16 lecture sentences whose correct translation depends on the field (fonction, corps, base, titres, cour, vers, moment…) or on the previous sentence (pronouns, «La seconde, non.», «Deux.»), scored automatically (required sense present, wrong sense and leaked context absent):
+
+| Prompt | Correct | Context cases | Median time |
+|---|---|---|---|
+| Original | 10/16 | 3/6 | 0.29 s |
+| + subject | 10/16 | 3/6 | 0.27 s |
+| + subject + previous sentences (inline) | 12/16 | 5/6 | 0.36 s |
+| + subject + previous sentences (separate blocks, shipped) | 13/16 | 6/6 | 0.33 s |
+
+The remaining misses were field terms the 4B model does not know (corps → 域, base → 碱, moment → 力矩); with a term list all three were translated as given, and unrelated sentences were unaffected. `scripts/test.sh --context` re-runs the key cases against the local model.
+
 ## Uncertain-word marks
 
 Calibrated on 928 words from 16 recordings (3 voices, 8 interference conditions),

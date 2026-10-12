@@ -44,6 +44,10 @@ enum Motion {
 
     static func state(reduced: Bool) -> Animation { reduced ? .easeOut(duration: 0.15) : state }
     static func enter(reduced: Bool) -> Animation { reduced ? .easeOut(duration: 0.15) : enter }
+    /// A new caption rises a few points into place; Reduce Motion keeps only the fade.
+    static func arrival(reduced: Bool) -> AnyTransition {
+        reduced ? .opacity : .opacity.combined(with: .offset(y: 8))
+    }
     /// Reduce Motion keeps the fade and drops the travel.
     static func edge(_ edge: Edge, reduced: Bool) -> AnyTransition {
         reduced ? .opacity : .move(edge: edge).combined(with: .opacity)

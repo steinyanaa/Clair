@@ -9,6 +9,12 @@ struct TranslationResult: Sendable {
     let seconds: Double
 }
 
+/// What the translator knows besides the sentence itself.
+struct TranslationContext: Sendable {
+    var preset = ClassPreset()
+    var previous: [String] = []
+}
+
 enum LocalModel {
     static var name: String { ModelOption.selectedTranslation }
     static let endpoint = URL(string: "http://127.0.0.1:11439")!
@@ -30,16 +36,43 @@ enum LocalModel {
     /// Keeps the translation model in memory through a long class with pauses, so a
     /// cold reload never pushes a line past the 5 s live limit into the fallback.
     static let keepAlive = "2h"
-    static func prompt(_ text: String) -> String {
-        "You are a professional French (fr) to Chinese (zh-Hans) translator. Your goal is to accurately convey the meaning and nuances of the original French text while adhering to Chinese grammar, vocabulary, and cultural sensitivities.\nProduce only the Chinese translation, without any additional explanations or commentary. Preserve all dates, numbers, and negations. Please translate the following French text into Chinese:\n\n\n" + text
+    /// Measured on 16 lecture sentences whose meaning depends on the field or on the
+    /// previous sentence: 10/16 correct without context, 13/16 with the field and the
+    /// previous sentences as separate blocks, and the term list fixed the remaining
+    /// field-specific words (corps → 域, base → 碱, moment → 力矩). Without a preset or
+    /// context the prompt is exactly the original one.
+    static func prompt(_ text: String, context: TranslationContext = TranslationContext()) -> String {
+        let instructions = "You are a professional French (fr) to Chinese (zh-Hans) translator. Your goal is to accurately convey the meaning and nuances of the original French text while adhering to Chinese grammar, vocabulary, and cultural sensitivities.\nProduce only the Chinese translation, without any additional explanations or commentary. Preserve all dates, numbers, and negations. "
+        let blocks = contextBlocks(context)
+        if blocks.isEmpty { return instructions + "Please translate the following French text into Chinese:\n\n\n" + text }
+        return instructions + blocks + "Please translate only the following French text into Chinese:\n\n\n" + text
     }
-    static func generate(_ text: String, patient: Bool = false) async throws -> TranslationResult {
+    /// Field and topic, term list and preceding sentences, each as its own block.
+    static func contextBlocks(_ context: TranslationContext) -> String {
+        var blocks: [String] = []
+        let preset = context.preset
+        let topic = preset.cleanTopic
+        if let field = preset.subject.field {
+            blocks.append("The text comes from a university lecture on \(field)" + (topic.isEmpty ? "" : " (\(topic))") + "; use the terminology of that field.")
+        } else if !topic.isEmpty {
+            blocks.append("The text comes from a university lecture on \(topic).")
+        }
+        let terms = preset.terms.prefix(30)
+        if !terms.isEmpty {
+            blocks.append("Glossary (always use these translations):\n" + terms.map { "\($0.source) → \($0.target)" }.joined(separator: "\n"))
+        }
+        if !context.previous.isEmpty {
+            blocks.append("Previous sentences (context, not to be translated):\n" + context.previous.joined(separator: "\n"))
+        }
+        return blocks.isEmpty ? "" : blocks.joined(separator: "\n\n") + "\n\n"
+    }
+    static func generate(_ text: String, context: TranslationContext = TranslationContext(), patient: Bool = false) async throws -> TranslationResult {
         let started = Date()
         var request = URLRequest(url: endpoint.appendingPathComponent("api/generate"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: [
-            "model": name, "prompt": prompt(text), "stream": false, "keep_alive": keepAlive,
+            "model": name, "prompt": prompt(text, context: context), "stream": false, "keep_alive": keepAlive,
             "options": ["temperature": 0, "num_ctx": 2048, "num_predict": 512]
         ])
         let (data, response) = try await (patient ? patientSession : session).data(for: request)
@@ -75,8 +108,8 @@ final class TranslationService {
         // installed-resource session for subsequent background requests.
         fallbackSession = TranslationSession(installedSource: Locale.Language(identifier: "fr"), target: Locale.Language(identifier: "zh-Hans"))
     }
-    func translate(_ french: String) async throws -> TranslationResult {
-        do { return try await LocalModel.generate(french) }
+    func translate(_ french: String, context: TranslationContext = TranslationContext()) async throws -> TranslationResult {
+        do { return try await LocalModel.generate(french, context: context) }
         catch {
             if Task.isCancelled { throw CancellationError() }
             guard allowFallback else { throw error }

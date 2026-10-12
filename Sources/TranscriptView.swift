@@ -25,10 +25,11 @@ struct TranscriptPane: View {
         ScrollViewReader { reader in
             ScrollView {
                 if lines.isEmpty {
-                    emptyState.padding(.top, 96)
+                    // Sits slightly above the optical centre of the visible area.
+                    emptyState.containerRelativeFrame(.vertical, alignment: .center) { height, _ in height * 0.82 }
                 } else {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        ClassHeader(session: controller.session)
+                    LazyVStack(alignment: .leading, spacing: Spacing.xs) {
+                        ClassHeader(controller: controller)
                         ForEach(lines) { line in
                             TranscriptRow(line: line, showFrench: controller.showFrench, fontSize: controller.fontSize,
                                           markUncertain: controller.markUncertain,
@@ -37,11 +38,16 @@ struct TranscriptPane: View {
                                           retranslate: { controller.retranslate(line.id) })
                                 .equatable()
                                 .id(line.id)
+                                .transition(Motion.arrival(reduced: reduceMotion))
                         }
                         Color.clear.frame(height: 1).id(bottomID)
                     }
+                    // Only a sentence arriving during a live class animates; opening another
+                    // class swaps the whole column at once (its own identity), never cross-fades.
+                    .animation(controller.isRecording ? Motion.enter(reduced: reduceMotion) : nil, value: lines.count)
+                    .id(controller.session.id)
                     .frame(maxWidth: Layout.readingWidth)
-                    .padding(.horizontal, Spacing.xxl).padding(.vertical, Spacing.m)
+                    .padding(.horizontal, Spacing.xxxl).padding(.top, Spacing.xl).padding(.bottom, Spacing.xxl)
                     .frame(maxWidth: .infinity)
                 }
             }
@@ -93,14 +99,23 @@ struct TranscriptPane: View {
     }
 
     private var emptyState: some View {
-        ContentUnavailableView {
-            Label("听课，从这里开始", systemImage: "waveform")
-        } description: {
-            Text("在下方选择麦克风或系统声音，然后开始听课。\n法语原文和中文译文会逐句出现，也可以把音频文件拖到这里。")
-        } actions: {
-            Button("导入音频…") { WindowCommand.importAudio.send() }
-                .disabled(controller.locked || controller.session.deletedAt != nil)
+        VStack(spacing: Spacing.xxl) {
+            VStack(spacing: Spacing.s) {
+                Text("这节课讲什么？").font(.largeTitle.weight(.semibold))
+                Text("选好学科，翻译会使用对应领域的术语，并结合上下文理解每一句。")
+                    .font(.title3).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            }
+            PresetEditor(controller: controller)
+            HStack(spacing: Spacing.xs) {
+                Text("准备好后点下方「开始听课」，或")
+                Button("导入音频…") { WindowCommand.importAudio.send() }.buttonStyle(.link)
+                    .disabled(controller.locked || controller.session.deletedAt != nil)
+            }
+            .font(.callout).foregroundStyle(.secondary)
         }
+        .frame(maxWidth: 640)
+        .padding(.horizontal, Spacing.xxl)
+        .frame(maxWidth: .infinity)
     }
 }
 
@@ -113,6 +128,7 @@ struct TranscriptRow: View, Equatable {
     let highlighted: Bool
     let editable: Bool
     let retranslate: () -> Void
+    @State private var hovering = false
 
     nonisolated static func == (a: Self, b: Self) -> Bool {
         a.line == b.line && a.showFrench == b.showFrench && a.fontSize == b.fontSize && a.markUncertain == b.markUncertain &&
@@ -139,15 +155,16 @@ struct TranscriptRow: View, Equatable {
     }
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: Spacing.l) {
+        HStack(alignment: .firstTextBaseline, spacing: Spacing.m) {
             Text(TranscriptRules.timecode(line.start))
-                .font(.caption.monospacedDigit()).foregroundStyle(.tertiary)
-                .frame(width: Layout.timecodeWidth, alignment: .leading)
-            VStack(alignment: .leading, spacing: Spacing.s) {
+                .font(.caption2.monospacedDigit()).foregroundStyle(.tertiary)
+                .frame(width: Layout.timecodeWidth, alignment: .trailing)
+                .opacity(hovering || highlighted ? 1 : 0)
+            VStack(alignment: .leading, spacing: Spacing.xs + Spacing.xxs) {
                 if showFrench {
                     Text(Self.marked(line.french, uncertain: markUncertain ? TranscriptRules.markedWords(line) : []))
-                        .font(.system(size: max(13, fontSize - 4)))
-                        .foregroundStyle(.secondary).lineSpacing(3)
+                        .font(.system(size: max(13, fontSize * 0.7)))
+                        .foregroundStyle(line.isFinal ? .secondary : .tertiary).lineSpacing(3)
                 }
                 if markUncertain, TranscriptRules.isDoubtful(line) {
                     Label(doubtLabel, systemImage: "waveform.badge.exclamationmark")
@@ -159,11 +176,14 @@ struct TranscriptRow: View, Equatable {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .textSelection(.enabled)
-        .padding(.vertical, Spacing.l).padding(.horizontal, Spacing.s)
+        .padding(.vertical, Spacing.m).padding(.trailing, Spacing.m)
         .background {
-            if highlighted { RoundedRectangle(cornerRadius: Radius.small).fill(Color.accentColor.opacity(0.12)) }
+            RoundedRectangle(cornerRadius: Radius.medium)
+                .fill(Color.accentColor.opacity(highlighted ? 0.12 : 0))
+                .padding(.leading, Layout.timecodeWidth)
         }
-        .overlay(alignment: .bottom) { Divider().padding(.leading, Layout.timecodeWidth + Spacing.l + Spacing.s) }
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.15), value: hovering)
         .accessibilityElement(children: .combine)
         .contextMenu {
             Button("复制译文") { copy(line.chinese) }.disabled(line.chinese.isEmpty)
@@ -176,7 +196,7 @@ struct TranscriptRow: View, Equatable {
 
     @ViewBuilder private var translation: some View {
         if !line.chinese.isEmpty {
-            Text(line.chinese).font(.system(size: fontSize)).lineSpacing(5).help(sourceHelp)
+            Text(line.chinese).font(.system(size: fontSize)).lineSpacing(6).help(sourceHelp)
             if isFallback || isPending {
                 HStack(spacing: Spacing.xs) {
                     if isPending { ProgressView().controlSize(.mini); Text(isFallback ? "正在用 Gemma 改进译文…" : "正在重新翻译…") }
@@ -185,8 +205,7 @@ struct TranscriptRow: View, Equatable {
                 .font(.caption).foregroundStyle(isPending ? Color.secondary : Color.orange)
             }
         } else if isPending || !line.isFinal {
-            HStack(spacing: Spacing.xs) { ProgressView().controlSize(.mini); Text(line.isFinal ? "正在翻译…" : "正在识别…") }
-                .font(.caption).foregroundStyle(.secondary)
+            TypingIndicator(label: line.isFinal ? "正在翻译" : "正在识别")
         } else {
             HStack(spacing: Spacing.s) {
                 if let error = line.error {
@@ -206,88 +225,101 @@ struct TranscriptRow: View, Equatable {
     }
 }
 
-/// Floating capture controls. Glass belongs to the controls only; the status text
-/// sits on the scroll edge effect so captions stay readable underneath.
+/// One floating glass capsule, centred over the captions. Status text appears
+/// above it only when something needs attention.
 struct TransportBar: View {
     @Bindable var controller: ClassController
     let runtime: ModelRuntime
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        HStack(alignment: .center, spacing: Spacing.m) {
-            status
-            Spacer(minLength: Spacing.s)
-            controls
+        VStack(spacing: Spacing.s) {
+            GlassEffectContainer(spacing: Spacing.s) {
+                HStack(spacing: Spacing.s) { controls }
+                    .controlSize(.large)
+            }
+            statusLine
         }
+        .frame(maxWidth: .infinity)
         .padding(.horizontal, Spacing.l).padding(.vertical, Spacing.m)
         .animation(Motion.state(reduced: reduceMotion), value: controller.captureState)
     }
 
-    private var status: some View {
-        VStack(alignment: .leading, spacing: Spacing.xxs) {
-            HStack(spacing: Spacing.s) {
-                switch controller.captureState {
-                case .recording:
-                    Circle().fill(.red).frame(width: 8, height: 8).accessibilityHidden(true)
-                    Text(TranscriptRules.timecode(controller.displayDuration)).font(.body.monospacedDigit().weight(.semibold))
-                    LevelMeter(controller: controller)
-                case .importing, .paused:
-                    Text(TranscriptRules.timecode(controller.displayDuration)).font(.body.monospacedDigit().weight(.semibold))
-                    Text(controller.status).foregroundStyle(.secondary).lineLimit(1)
-                default:
-                    Text(controller.status).lineLimit(1)
-                }
+    /// Always shows whether the translation model is ready, plus anything else
+    /// worth knowing right now (preparing, paused, improving fallback lines).
+    private var statusLine: some View {
+        HStack(spacing: Spacing.xs + Spacing.xxs) {
+            if runtime.busy {
+                ProgressView().controlSize(.mini)
+            } else {
+                Circle().fill(runtime.ready ? Color.green : Color.orange).frame(width: 6, height: 6)
             }
-            .font(.callout)
-            HStack(spacing: Spacing.xs) {
-                Circle().fill(runtime.ready ? Color.green : Color.orange).frame(width: 6, height: 6).accessibilityHidden(true)
-                Text(detailText).lineLimit(1)
-                Image(systemName: "lock.shield").padding(.leading, Spacing.xs).help("语音和课堂内容只在这台 Mac 上处理")
-                    .accessibilityLabel("本机处理")
-            }
-            .font(.caption).foregroundStyle(.secondary)
+            Text(([modelText] + notices).joined(separator: " · ")).lineLimit(1)
         }
+        .font(.caption).foregroundStyle(.secondary)
+        .help(runtime.ready ? "翻译在本机运行，语音和课堂内容不会上传" : runtime.status)
         .accessibilityElement(children: .combine)
     }
 
-    private var detailText: String {
-        if controller.pendingCount > 0, !controller.isRecording, controller.upgradableCount > 0 {
-            return "正在用 Gemma 改进 \(controller.upgradableCount) 句备用译文"
-        }
-        if controller.pendingCount > 0 { return "\(controller.pendingCount) 段待翻译 · " + controller.translationMode }
-        return runtime.ready ? controller.translationMode : runtime.status
+    private var modelText: String {
+        guard runtime.ready else { return runtime.status }
+        let title = ModelOption.translation.first { $0.id == LocalModel.name }?.title ?? "Gemma"
+        return title + " 已就绪"
     }
 
-    private var controls: some View {
-        GlassEffectContainer(spacing: Spacing.s) {
-            HStack(spacing: Spacing.s) {
-                switch controller.captureState {
-                case .idle, .starting:
-                    sourcePicker
-                    Button { Task { await controller.start() } } label: {
-                        if controller.isStarting {
-                            HStack(spacing: Spacing.s) { ProgressView().controlSize(.small); Text("准备中…") }
-                        } else {
-                            Label("开始听课", systemImage: "record.circle")
-                        }
-                    }
-                    .buttonStyle(.glassProminent)
-                    .disabled(!controller.canToggleCapture)
-                    .help("开始听课 ⌘R")
-                case .recording, .paused, .stopping:
-                    Button { Task { await controller.stop() } } label: { Label("结束", systemImage: "stop.fill") }
-                        .buttonStyle(.glass).disabled(controller.isStopping).help("结束并保存 ⌘.")
-                    Button { Task { await controller.toggleCapture() } } label: {
-                        Label(controller.isPaused ? "继续" : "暂停", systemImage: controller.isPaused ? "play.fill" : "pause.fill")
-                    }
-                    .buttonStyle(.glassProminent).disabled(!controller.canToggleCapture)
-                    .help(controller.isPaused ? "继续听课 ⌘R" : "暂停 ⌘R")
-                case .importing:
-                    Button { Task { await controller.stop() } } label: { Label("停止转写", systemImage: "stop.fill") }
-                        .buttonStyle(.glass).help("停止导入，保留已转写的内容")
+    private var notices: [String] {
+        var notes: [String] = []
+        if controller.captureState == .starting { notes.append(controller.status) }
+        if controller.captureState == .paused { notes.append("已暂停") }
+        if controller.pendingCount > 0, !controller.isRecording, controller.upgradableCount > 0 {
+            notes.append("正在用 Gemma 改进 \(controller.upgradableCount) 句备用译文")
+        } else if controller.pendingCount > 2, controller.isRecording {
+            notes.append("\(controller.pendingCount) 句待翻译")
+        }
+        return notes
+    }
+
+    @ViewBuilder private var controls: some View {
+        switch controller.captureState {
+        case .idle, .starting:
+            sourcePicker
+            Button { Task { await controller.start() } } label: {
+                if controller.isStarting {
+                    HStack(spacing: Spacing.s) { ProgressView().controlSize(.small); Text("准备中") }
+                } else {
+                    Label("开始听课", systemImage: "record.circle")
                 }
             }
-            .controlSize(.large)
+            .buttonStyle(.glassProminent)
+            .disabled(!controller.canToggleCapture)
+            .help("开始听课 ⌘R")
+        case .recording, .paused, .stopping:
+            HStack(spacing: Spacing.s) {
+                Circle().fill(controller.isPaused ? Color.secondary : Color.red).frame(width: 7, height: 7)
+                    .accessibilityHidden(true)
+                Text(TranscriptRules.timecode(controller.displayDuration)).font(.body.monospacedDigit().weight(.medium))
+                LiveWaveform(controller: controller, paused: controller.isPaused)
+            }
+            .padding(.horizontal, Spacing.l).frame(height: 36)
+            .glassEffect()
+            .accessibilityElement(children: .combine)
+            Button { Task { await controller.toggleCapture() } } label: {
+                Image(systemName: controller.isPaused ? "play.fill" : "pause.fill").frame(width: 18)
+            }
+            .buttonStyle(.glass).buttonBorderShape(.circle).disabled(!controller.canToggleCapture)
+            .help(controller.isPaused ? "继续听课 ⌘R" : "暂停 ⌘R")
+            .accessibilityLabel(controller.isPaused ? "继续" : "暂停")
+            Button { Task { await controller.stop() } } label: { Image(systemName: "stop.fill").frame(width: 18) }
+                .buttonStyle(.glass).buttonBorderShape(.circle).disabled(controller.isStopping)
+                .help("结束并保存 ⌘.").accessibilityLabel("结束")
+        case .importing:
+            HStack(spacing: Spacing.s) {
+                ProgressView().controlSize(.small)
+                Text("正在转写音频 · " + TranscriptRules.timecode(controller.displayDuration)).monospacedDigit()
+            }
+            .padding(.horizontal, Spacing.l).frame(height: 36).glassEffect()
+            Button { Task { await controller.stop() } } label: { Image(systemName: "stop.fill").frame(width: 18) }
+                .buttonStyle(.glass).buttonBorderShape(.circle).help("停止导入，保留已转写的内容").accessibilityLabel("停止转写")
         }
     }
 
@@ -307,40 +339,64 @@ struct TransportBar: View {
     }
 }
 
-/// Five-bar input meter. Reads only `level`, so it is the only view that updates
-/// with each audio buffer; values change too often to animate.
-struct LevelMeter: View {
+/// Rolling waveform of the recent input level. It reads only `level`, so it is the
+/// only view redrawn per audio buffer; values change too often to animate.
+struct LiveWaveform: View {
     let controller: ClassController
+    var paused = false
+    @State private var history = [CGFloat](repeating: 0, count: 28)
+
     var body: some View {
-        let level = CGFloat(controller.level)
-        HStack(alignment: .center, spacing: 2) {
-            ForEach(0..<5, id: \.self) { index in
-                let threshold = CGFloat(index) / 5
-                Capsule()
-                    .fill(level > threshold ? Color.accentColor : Color.secondary.opacity(0.3))
-                    .frame(width: 3, height: 5 + CGFloat(index) * 2.5)
+        Canvas { context, size in
+            let bar: CGFloat = 2.5, gap = (size.width - bar * CGFloat(history.count)) / CGFloat(history.count - 1)
+            for (index, value) in history.enumerated() {
+                let height = max(bar, value * size.height)
+                let rect = CGRect(x: CGFloat(index) * (bar + gap), y: (size.height - height) / 2, width: bar, height: height)
+                let fade = 0.35 + 0.65 * CGFloat(index) / CGFloat(history.count - 1)
+                context.fill(Path(roundedRect: rect, cornerRadius: bar / 2), with: .color(.accentColor.opacity(paused ? 0.25 : fade)))
             }
         }
-        .frame(height: 16)
+        .frame(width: 96, height: 18)
+        .onChange(of: controller.level) { _, value in
+            history.removeFirst(); history.append(min(1, CGFloat(value) * 1.4))
+        }
         .accessibilityLabel("输入音量")
-        .accessibilityValue(level > 0.05 ? "有声音" : "安静")
+        .accessibilityValue(controller.level > 0.05 ? "有声音" : "安静")
+    }
+}
+
+/// Animated ellipsis while a sentence is being recognised or translated.
+struct TypingIndicator: View {
+    let label: String
+    var body: some View {
+        Image(systemName: "ellipsis")
+            .font(.title3.weight(.semibold))
+            .foregroundStyle(.tertiary)
+            .symbolEffect(.variableColor.iterative.dimInactiveLayers, options: .repeating)
+            .accessibilityLabel(label)
+            .help(label)
     }
 }
 
 /// Title block at the top of the transcript; scrolls away with the captions.
 struct ClassHeader: View {
-    let session: ClassSession
+    let controller: ClassController
+    private var session: ClassSession { controller.session }
     private var meta: String {
-        [session.created.formatted(.dateTime.year().month().day().hour().minute()), session.source,
+        [session.created.formatted(.dateTime.month().day().hour().minute()), session.source,
          TranscriptRules.timecode(session.duration), "\(session.lines.count) 句"].joined(separator: " · ")
     }
     var body: some View {
-        VStack(alignment: .leading, spacing: Spacing.xs) {
-            Text(session.title).font(.title2.weight(.semibold)).textSelection(.enabled)
-            Text(meta).font(.callout).monospacedDigit().foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: Spacing.s) {
+            Text(session.title).font(.largeTitle.weight(.semibold)).textSelection(.enabled)
+            HStack(spacing: Spacing.m) {
+                PresetTag(controller: controller)
+                Text(meta).font(.callout).monospacedDigit().foregroundStyle(.tertiary)
+            }
         }
-        .padding(.horizontal, Spacing.s).padding(.top, Spacing.s).padding(.bottom, Spacing.m)
-        .accessibilityElement(children: .combine)
+        .padding(.leading, Layout.timecodeWidth + Spacing.m)
+        .padding(.bottom, Spacing.xl)
+        .accessibilityElement(children: .contain)
         .accessibilityAddTraits(.isHeader)
     }
 }

@@ -4,6 +4,15 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.4.0] - 2026-10-12
+
+### Added
+- **Class presets**: before (or during) a class, choose the subject (文学, 数理, 经济, 法律, 历史哲学, 医学生物, 工程计算机, 艺术), an optional topic and an optional term list (`corps = 域`). The preset is saved with the class, new classes start from the last one, and the class assistant uses it too.
+- **Context-aware translation**: each sentence is translated together with the subject, the term list and the two previous sentences (as context that is not translated). On 16 lecture sentences whose meaning depends on the field or the previous sentence, correct translations went from 10/16 to 13/16, all six context-dependent cases became correct, and the term list fixed the remaining field-specific words. Median time per sentence 0.33 s (was 0.29 s).
+
+### Changed
+- Calmer, more modern interface: a «这节课讲什么？» setup screen with subject chips, a large class title with the preset as a tag, a divider-free reading column with time stamps on hover and a gentle fade-in for new sentences, an animated typing indicator, and a single centred glass capsule with a live waveform for capture controls, with the translation model's status (for example “TranslateGemma 4B 已就绪”) always shown beneath it.
+
 ## [0.3.1] - 2026-10-12
 
 ### Changed

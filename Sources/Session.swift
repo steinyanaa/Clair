@@ -32,6 +32,8 @@ struct ClassSession: Codable, Identifiable, Equatable {
     var projectID: UUID?
     var deletedAt: Date?
     var studyMessages: [StudyMessage]?
+    /// Subject, topic and terms chosen for this class; nil means general.
+    var preset: ClassPreset?
 }
 
 // SpeechAnalyzer can move the beginning of a volatile range past preceding
@@ -189,6 +191,7 @@ enum PreferenceKey {
     static let source = "audioSource"
     static let lastClass = "lastClass"
     static let markUncertain = "markUncertainWords"
+    static let lastPreset = "lastClassPreset"
 }
 
 @MainActor
@@ -256,6 +259,36 @@ final class ClassController {
         // Restore before anything awaits: the window opens on the last class, and
         // a capture started during model warm-up can never be swapped out.
         restoreLastClass()
+    }
+
+    var preset: ClassPreset { session.preset ?? ClassPreset() }
+    /// Changes the class preset. Later sentences are translated with it, and new
+    /// classes start from the last one used.
+    func setPreset(_ preset: ClassPreset) {
+        guard session.deletedAt == nil else { return }
+        session.preset = preset.isDefault ? nil : preset
+        if let data = try? JSONEncoder().encode(preset) { UserDefaults.standard.set(data, forKey: PreferenceKey.lastPreset) }
+        if !session.lines.isEmpty { scheduleSave() }
+    }
+    private var lastPreset: ClassPreset? {
+        guard let data = UserDefaults.standard.data(forKey: PreferenceKey.lastPreset),
+              let preset = try? JSONDecoder().decode(ClassPreset.self, from: data), !preset.isDefault else { return nil }
+        return preset
+    }
+    /// Up to two finished sentences before a line, so the translator can resolve
+    /// pronouns, ellipses and repeated terms. Bounded to keep the prompt short.
+    func translationContext(before id: String) -> TranslationContext {
+        var previous: [String] = []
+        if let index = session.lines.firstIndex(where: { $0.id == id }) {
+            for line in session.lines[..<index].reversed() where line.isFinal {
+                let text = TranscriptRules.translationSource(line.french)
+                guard TranscriptRules.hasSpeech(text) else { continue }
+                if previous.joined().count + text.count > 400 { break }
+                previous.insert(text, at: 0)
+                if previous.count == 2 { break }
+            }
+        }
+        return TranslationContext(preset: preset, previous: previous)
     }
 
     var pendingCount: Int { readyAt.count + (translatingLine == nil ? 0 : 1) }
@@ -470,7 +503,8 @@ final class ClassController {
                     guard let line = self.upgradeCandidate else { break }
                     self.upgradeTried.insert(line.id)
                     self.translatingLine = line.id
-                    let result = try? await LocalModel.generate(TranscriptRules.translationSource(line.french), patient: true)
+                    let result = try? await LocalModel.generate(TranscriptRules.translationSource(line.french),
+                                                                context: self.translationContext(before: line.id), patient: true)
                     if self.translatingLine == line.id { self.translatingLine = nil }
                     guard let result, !Task.isCancelled, self.session.id == sessionID,
                           let index = self.session.lines.firstIndex(where: { $0.id == line.id }),
@@ -488,7 +522,8 @@ final class ClassController {
                 self.translatingLine = line.id
                 self.translation.allowFallback = self.allowFallback
                 let outcome: Result<TranslationResult, Error>
-                do { outcome = .success(try await self.translation.translate(TranscriptRules.translationSource(line.french))) }
+                let context = self.translationContext(before: line.id)
+                do { outcome = .success(try await self.translation.translate(TranscriptRules.translationSource(line.french), context: context)) }
                 catch { outcome = .failure(error) }
                 if self.translatingLine == line.id { self.translatingLine = nil }
                 guard !Task.isCancelled, self.session.id == sessionID,
@@ -536,7 +571,8 @@ final class ClassController {
     func newSession() {
         guard !locked else { return }
         cancelStudy(); save(); resetTranslationQueue()
-        session = ClassSession(); isPaused = false; error = nil; status = "准备好后，开始听课"; elapsed = 0
+        session = ClassSession(); session.preset = lastPreset
+        isPaused = false; error = nil; status = "准备好后，开始听课"; elapsed = 0
         translationMode = "Gemma 本地翻译"
     }
     func select(_ item: ClassSession) {
