@@ -4,6 +4,11 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+- New app icon: the “clair” wordmark on a white rounded square. The icon is now built from `Resources/AppIcon.png` instead of being drawn in code.
+
 ## [0.3.0] - 2026-10-12
 
 First public release.

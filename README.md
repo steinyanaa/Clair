@@ -65,8 +65,8 @@ Measured results and known limits are in [docs/TESTING.md](docs/TESTING.md).
 |---|---|
 | `Sources/` | The app (SwiftUI). `Session.swift` capture and translation pipeline, `Audio.swift` microphone / system audio / file capture and recognition, `Translation.swift` model service and downloads, `Study.swift` assistant, `Library.swift` storage, `DesignSystem.swift` spacing, type and motion tokens, plus one file per screen. |
 | `Tests/` | Test driver (unit tests and end-to-end modes) and the public test lecture text. |
-| `Tools/` | Icon generator and a helper that repeats audio for long tests. |
-| `Resources/` | Info.plist, entitlements and the in-app user guide. |
+| `Tools/` | A helper that repeats audio for long tests. |
+| `Resources/` | Info.plist, entitlements, the 1024 px app icon master (`AppIcon.png`) and the in-app user guide. |
 | `scripts/` | Build, test, packaging and runtime download scripts. |
 
 ## Contributing

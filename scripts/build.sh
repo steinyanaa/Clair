@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Builds dist/ClairClass.app: compiles the app, generates the icon, bundles the
+# Builds dist/ClairClass.app: compiles the app, builds the icon, bundles the
 # Ollama runtime from ./runtime and signs the bundle ad hoc.
 #   scripts/build.sh                 full app bundle
 #   scripts/build.sh --compile-only  type-check and compile the sources only (CI)
@@ -24,14 +24,14 @@ xcrun swiftc -swift-version 5 -parse-as-library -O -target arm64-apple-macos26.0
   -module-name ClairClass -module-cache-path "$build/module-cache" \
   "$root"/Sources/*.swift -o "$app/Contents/MacOS/ClairClass"
 cp "$root/Resources/Info.plist" "$app/Contents/Info.plist"
-if [[ ! -f "$build/ClairClass.icns" || "$root/Tools/Icon.swift" -nt "$build/ClairClass.icns" ]]; then
+# The app icon is built from the 1024 px master in Resources/AppIcon.png.
+if [[ ! -f "$build/ClairClass.icns" || "$root/Resources/AppIcon.png" -nt "$build/ClairClass.icns" ]]; then
   iconset="$build/ClairClass.iconset"
-  mkdir -p "$iconset"
-  xcrun swift -module-cache-path "$build/module-cache" "$root/Tools/Icon.swift" "$build/icon-1024.png"
+  rm -rf "$iconset"; mkdir -p "$iconset"
   for size in 16 32 128 256 512; do
-    sips -z "$size" "$size" "$build/icon-1024.png" --out "$iconset/icon_${size}x${size}.png" > /dev/null
+    sips -z "$size" "$size" "$root/Resources/AppIcon.png" --out "$iconset/icon_${size}x${size}.png" > /dev/null
     double=$((size * 2))
-    sips -z "$double" "$double" "$build/icon-1024.png" --out "$iconset/icon_${size}x${size}@2x.png" > /dev/null
+    sips -z "$double" "$double" "$root/Resources/AppIcon.png" --out "$iconset/icon_${size}x${size}@2x.png" > /dev/null
   done
   iconutil -c icns "$iconset" -o "$build/ClairClass.icns"
 fi
