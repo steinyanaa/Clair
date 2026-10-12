@@ -31,8 +31,8 @@ Clair（原名 ClairClass）用麦克风（现场课堂）或系统声音（网�
 ## 构建与运行
 
 ```sh
-git clone https://github.com/steinyanaa/ClairClass.git
-cd ClairClass
+git clone https://github.com/steinyanaa/Clair.git
+cd Clair
 scripts/fetch-runtime.sh      # 下载官方 Ollama 运行时（约 170 MB）并校验签名
 scripts/build.sh              # 生成 dist/Clair.app
 open dist/Clair.app

@@ -31,8 +31,8 @@ Clair (法语听课助手, formerly ClairClass) listens to a lecture — from th
 ## Build and run
 
 ```sh
-git clone https://github.com/steinyanaa/ClairClass.git
-cd ClairClass
+git clone https://github.com/steinyanaa/Clair.git
+cd Clair
 scripts/fetch-runtime.sh      # official Ollama runtime (~170 MB), signature-checked
 scripts/build.sh              # → dist/Clair.app
 open dist/Clair.app
