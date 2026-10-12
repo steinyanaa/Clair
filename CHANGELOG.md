@@ -22,6 +22,7 @@ All notable changes to this project are documented here. The format follows
 - Scoring requires an accepted short equivalent for content words and rejects neighbouring meanings; labelled general usage is accepted for function words. This is a fixed regression set, not an estimate of unrestricted translation accuracy. Per-case results: `docs/lookup-evaluation-0.5.1/{before,marked,after}.jsonl`.
 
 - `scripts/build.sh --compile-only` passed with Swift 5 / macOS 26. Three consecutive `scripts/test.sh` runs each passed all **19 reported groups**, including `wordLookup` and `continueClass`; logs are alongside the evaluation results. Range, elision, repeated-lemma, cache invalidation and grammar-only cases run without a model.
+- On fresh CI Macs without system French lemmatisation assets, only the asset-dependent lemma assertions are explicitly reported as skipped. A returned but incorrect lemma still fails; selection, elision, cache and grammar checks continue without model or asset downloads.
 - An additional system-fallback check reached the existing “备用翻译尚未安装” error: French→Chinese system resources are not installed on this Mac. Successful fallback could not be exercised offline; its implementation is retained. No resources were downloaded.
 
 ### Known limitations

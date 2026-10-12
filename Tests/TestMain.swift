@@ -219,8 +219,13 @@ struct TestMain {
             // Word lookup: elisions are stripped, verbs get their base form, sentence-like answers are rejected.
             try check(WordLookup.clean("l’augmentation") == "augmentation" && WordLookup.clean("qu'ils") == "ils" && WordLookup.clean("d’intérêt,") == "intérêt")
             try check(WordLookup.clean("en revanche") == "en revanche" && WordLookup.clean("Deux.") == "Deux" && WordLookup.clean("l'") == "l")
-            try check(WordLookup.lemma(of: "allons", in: "Nous allons étudier la croissance.", range: NSRange(location: 5, length: 6)) == "aller", "Conjugated verb lemma")
-            try check(WordLookup.lemma(of: "croissance", in: "Nous allons étudier la croissance.", range: NSRange(location: 23, length: 10)) == nil, "Base form is not repeated")
+            let frenchLemmaAvailable = WordLookup.tag(of: "allons", in: "Nous allons étudier la croissance.",
+                range: NSRange(location: 5, length: 6), scheme: .lemma) != nil
+            // Fresh CI Macs may lack French NLP assets; a returned but wrong lemma must still fail.
+            if frenchLemmaAvailable {
+                try check(WordLookup.lemma(of: "allons", in: "Nous allons étudier la croissance.", range: NSRange(location: 5, length: 6)) == "aller", "Conjugated verb lemma")
+                try check(WordLookup.lemma(of: "croissance", in: "Nous allons étudier la croissance.", range: NSRange(location: 23, length: 10)) == nil, "Base form is not repeated")
+            }
             try check(WordLookup.looksLikeSentence("今天，我们将研究经济增长", source: "allons") && WordLookup.looksLikeSentence("仅仅一个假设是不够的。", source: "ne suffit pas"))
             try check(!WordLookup.looksLikeSentence("投资", source: "investissements") && !WordLookup.looksLikeSentence("不足以", source: "ne suffit pas"))
             let lookupPrompt = LocalModel.lookupPrompt("base", sentence: "On ajoute une base forte.", range: NSRange(location: 14, length: 4), preset: ClassPreset(subject: .science))
@@ -228,8 +233,11 @@ struct TestMain {
             let repeated = "Les faits sont vérifiables, les calculs sont faits à la main."
             let firstFact = (repeated as NSString).range(of: "faits")
             let lastFact = (repeated as NSString).range(of: "faits", options: .backwards)
-            try check(WordLookup.lemma(of: "faits", in: repeated, range: firstFact) == "fait")
-            try check(WordLookup.lemma(of: "faits", in: repeated, range: lastFact) == "faire")
+            if frenchLemmaAvailable {
+                try check(WordLookup.lemma(of: "faits", in: repeated, range: firstFact) == "fait")
+                try check(WordLookup.lemma(of: "faits", in: repeated, range: lastFact) == "faire")
+            }
+            printJSON(["frenchLemmatizer": frenchLemmaAvailable ? "passed" : "skipped (system French NLP assets unavailable)"])
             let repeatedPrompt = LocalModel.lookupPrompt("faits", sentence: repeated, range: lastFact, preset: ClassPreset())
             try check(repeatedPrompt.contains("Les faits sont vérifiables, les calculs sont [faits]"))
             let elided = "🧪 Le taux d’intérêt et l’intérêt."
