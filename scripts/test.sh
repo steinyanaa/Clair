@@ -5,6 +5,10 @@
 #   scripts/test.sh --study                                          (needs the assistant model)
 #   scripts/test.sh --lookup -ClairClassDataRoot /tmp/ClairLookup  (service on 11449; --baseline / --marked compare prompts)
 #   scripts/test.sh --bench                                          (library read/write timings)
+#   scripts/test.sh --recognize <audio-file> --realtime -ClairClassDataRoot <temporary-directory>
+# Add -ClairClassSpeechDiagnostics to write timing-only JSONL into the test root (audio, recognition,
+# main-thread lag, translation queue). It also works with --pipeline <audio-file> --realtime.
+# The same flag works in a dev app with -ClairClassDataRoot; never use a real class library.
 set -eu
 root="${0:A:h:h}"
 build="$root/.build"

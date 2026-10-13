@@ -4,6 +4,38 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.5.2] - 2026-10-12
+
+### Fixed
+- **Chinese no longer blanks and jumps when a line is revised.** When the French of a translated line changes (the recogniser revises a draft, a sentence is finalised differently, or a sentence split by a pause is merged with its continuation), the earlier Chinese stays on screen, dimmed and without a status row, until the new translation replaces it in place. Previously the Chinese was cleared, an ellipsis showed, and the row shrank and grew back, shifting every caption below (245 pt → 225 pt → 245 pt for a one-line translation in a hidden-window check; now 245 pt throughout). Provisional Chinese is never saved or exported; if the new translation fails it is withdrawn and the error shows.
+- **Far fewer wasted live translations.** The recogniser revises a draft about once a second (bursts up to 1.18 s apart), but drafts were translated after 0.8 s without change, so about three in four draft requests were discarded as stale and took about a third of the model's time. An unfinished trailing sentence now waits 1.3 s; complete sentences (0.8 s) and finals keep their holds. Hold rules live in `TranscriptRules.translationHold`.
+
+### Changed
+- Live French drafts use SwiftUI text; completed captions keep click/selection lookup. Settled text measurements are cached by width and invalidated on content/style changes. Closing a lookup card cancels its request, and cancelled lookups cannot populate the cache or start the contextual request.
+
+### Added
+- Opt-in timing diagnostics: `-ClairClassSpeechDiagnostics` together with `-ClairClassDataRoot <temporary-directory>` writes one `speech-timing-<UUID>.jsonl` per run into that directory. It records audio delivery/conversion, recognition delivery (draft length in characters), main-thread lag of 50 ms or more (a 100 ms main-queue probe), each live translation request (hold, wait, request time, draft/final, complete sentence, shown or discarded, fallback, failure) and each on-screen translation superseded by a change of the French (cause, case/punctuation-only, kept visible or not). It is written on a separate queue and contains no audio or transcript text. It cannot be enabled against the real class library.
+- `scripts/test-captions.sh`: hidden-window layout checks with synthetic data (drafts, settled captions, text growth, narrower/restored widths, disabled lookup, unchanged row height while revising). `scripts/test.sh --recognize <audio> --realtime` reports recognition arrival intervals and requires already-installed French speech assets.
+
+### Validation
+- `scripts/build.sh --compile-only` passed. Three consecutive `scripts/test.sh` runs each passed all 21 reported groups, including the new provisional-Chinese checks (kept while queued, not stored, kept across a merge, withdrawn when re-translation fails); the seven caption-layout scenarios passed.
+- Full-window replay without a microphone (190 s synthesized French lecture in real time, real recognition, local model on the fixture port, synthetic level meter, temporary library), two alternating runs each:
+  - Trailing-fragment hold: discarded draft requests 136–142 → 0; model busy 91–95 s → 29 s of ~200 s; finished-sentence queue wait median 203–246 → 54–59 ms. Time from the last French change to Chinese was unchanged within noise (draft sentences ~1.3 s, finals ~1.5–1.7 s median).
+  - Revisions: 12 of 59 shown translations were superseded (7 merges, 4 draft revisions, 1 finalisation change); none blank now.
+- Live microphone, dev app with a temporary library:
+  - About 2 minutes: audio kept pace with the clock (130.6 s in 130.5 s); recognition arrived every 0.92 s (median), 0.07 s behind the audio; longest main-thread lag 115 ms; Chinese 1.3–1.4 s after the French stopped changing.
+  - About 4 minutes with this release's code, confirmed by the tester: 62 translations shown, 50 later superseded; 45 stayed visible until replaced and 5 blanked (see Known limitations). 6 of 68 requests were discarded. Main-thread lag stayed under 190 ms while speaking.
+
+### Investigation
+- The original report was captions pausing while the lecturer spoke and then arriving as a whole paragraph. It was not reproduced: not in replays of the released 0.5.1 or of this code, and not in the two microphone sessions. In both, recognition arrived in bursts of four or five results about every 0.9 s, with no backlog. Long recognition gaps coincided with the speaker being silent. One early replay showed main-thread lags up to 0.9 s after 160 s; it did not recur in four later replays and remains unexplained. The released 0.5.1 French draft view was also checked: it did not clip or freeze while growing. The diagnostics are kept to capture the stall if it returns.
+- A hidden 600-row pane simulation measured mean 6.146 ms before / 6.237 ms after the draft display change (p95 6.993 / 6.812 ms): no meaningful pane-level speedup is claimed.
+
+### Known limitations
+- The cause of the original pause-then-burst stall is not confirmed.
+- When the recogniser re-times a segment while finalising it, its lines are replaced by new ones, and their Chinese is still cleared and re-translated. All 5 such cases in the 4-minute session differed only in case or punctuation.
+- Merging a sentence with its continuation removes the continuation's row, which shifts later captions up once.
+- During unpunctuated speech, the trailing fragment is translated only after a 1.3 s pause (previously 0.8 s).
+
 ## [0.5.1] - 2026-10-12
 
 ### Fixed

@@ -105,6 +105,10 @@ struct FrenchLine: NSViewRepresentable {
         }
     }
 
+    static func dismantleNSView(_ view: FrenchTextView, coordinator: Coordinator) {
+        coordinator.closeLookup()
+    }
+
     func updateNSView(_ view: FrenchTextView, context: Context) {
         context.coordinator.parent = self
         update(view, coordinator: context.coordinator)
@@ -113,10 +117,15 @@ struct FrenchLine: NSViewRepresentable {
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: FrenchTextView, context: Context) -> CGSize? {
         guard let container = nsView.textContainer, let layout = nsView.layoutManager else { return nil }
         let proposed = proposal.width.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
-        container.containerSize = NSSize(width: proposed ?? 10_000, height: .greatestFiniteMagnitude)
+        let width = proposed ?? 10_000
+        container.containerSize = NSSize(width: width, height: .greatestFiniteMagnitude)
+        if let cached = nsView.measuredSizes[width] { return cached }
         layout.ensureLayout(for: container)
         let used = layout.usedRect(for: container)
-        return CGSize(width: proposed ?? ceil(used.width), height: ceil(used.height))
+        let measured = CGSize(width: proposed ?? ceil(used.width), height: ceil(used.height))
+        if nsView.measuredSizes.count >= 8 { nsView.measuredSizes.removeAll() }
+        nsView.measuredSizes[width] = measured
+        return measured
     }
 
     private func update(_ view: FrenchTextView, coordinator: Coordinator) {
@@ -124,7 +133,9 @@ struct FrenchLine: NSViewRepresentable {
         let key = "\(text)|\(uncertain)|\(size)|\(settled)"
         guard coordinator.contentKey != key else { return }
         coordinator.contentKey = key
+        view.measuredSizes.removeAll()
         view.textStorage?.setAttributedString(attributed())
+        view.invalidateIntrinsicContentSize()
     }
 
     private func attributed() -> NSAttributedString {
@@ -154,6 +165,14 @@ struct FrenchLine: NSViewRepresentable {
         var contentKey = ""
         private var popover: NSPopover?
         private var shownRange: NSRange?
+        private var lookupTask: Task<Void, Never>?
+        deinit { lookupTask?.cancel() }
+
+        func closeLookup() {
+            lookupTask?.cancel(); lookupTask = nil
+            popover?.close()
+        }
+
         init(parent: FrenchLine) { self.parent = parent }
 
         func lookUp(_ range: NSRange) {
@@ -165,15 +184,17 @@ struct FrenchLine: NSViewRepresentable {
             guard phrase.contains(where: \.isLetter), phrase.count <= 160 else { return }
             let state = LookupState(phrase: phrase, lemma: WordLookup.lemma(of: phrase, in: sentence, range: selection.range))
             let lookup = parent.lookup
-            let load: () -> Void = { [weak state] in
-                Task { @MainActor in
+            let load: () -> Void = { [weak self, weak state] in
+                self?.lookupTask?.cancel()
+                self?.lookupTask = Task { @MainActor in
                     guard let state else { return }
                     state.failure = nil
                     do { state.meaning = try await lookup(phrase, state.lemma, sentence, selection.range) }
-                    catch { state.failure = error.localizedDescription }
+                    catch is CancellationError { }
+                    catch { if !Task.isCancelled { state.failure = error.localizedDescription } }
                 }
             }
-            popover?.close()
+            closeLookup()
             let popover = NSPopover()
             popover.behavior = .transient
             popover.animates = true
@@ -189,6 +210,7 @@ struct FrenchLine: NSViewRepresentable {
 
         func popoverDidClose(_ notification: Notification) {
             guard let closed = notification.object as? NSPopover, closed === popover else { return }
+            lookupTask?.cancel(); lookupTask = nil
             if let textView, textView.selectedRange() == shownRange {
                 textView.setSelectedRange(NSRange(location: textView.selectedRange().location, length: 0))
             }
@@ -200,6 +222,8 @@ struct FrenchLine: NSViewRepresentable {
 final class FrenchTextView: NSTextView {
     var onLookup: ((NSRange) -> Void)?
     var lookupEnabled = true
+    // SwiftUI probes several widths repeatedly, even when only the Chinese line changed.
+    var measuredSizes: [CGFloat: CGSize] = [:]
 
     override func mouseDown(with event: NSEvent) {
         super.mouseDown(with: event)   // runs the selection tracking loop until mouse up

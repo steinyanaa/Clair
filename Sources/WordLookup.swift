@@ -134,6 +134,7 @@ enum WordLookup {
 extension ClassController {
     /// Looks up a word or phrase from a transcript line. Results are kept for the session.
     func lookUp(_ phrase: String, lemma: String?, in sentence: String, range: NSRange) async throws -> WordMeaning {
+        try Task.checkCancellation()
         guard let span = Range(range, in: sentence), String(sentence[span]) == phrase else {
             throw AppError("所选文字已变化，请重新选择。")
         }
@@ -159,6 +160,7 @@ extension ClassController {
             return meaning
         }
         let plain = try await translation.lookUp(lemma ?? phrase, sentence: nil, preset: preset)
+        try Task.checkCancellation()
         meaning.plain = WordLookup.tidy(plain.text); meaning.backend = plain.backend
         // Conjugated verbs often pull in their subject or auxiliary, even with markers.
         // Their dictionary form gives a safer isolated meaning at half the latency.
@@ -169,6 +171,7 @@ extension ClassController {
            WordLookup.acceptsContext(used.text, plain: meaning.plain ?? "", source: phrase) {
             meaning.inSentence = WordLookup.tidy(used.text)
         }
+        try Task.checkCancellation()
         lookupCache[key] = meaning
         return meaning
     }

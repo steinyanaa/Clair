@@ -54,7 +54,7 @@ scripts/test.sh --study                  # 课堂助手测试，需要课堂助�
 scripts/test.sh --lookup -ClairClassDataRoot /tmp/ClairLookup   # 查词评测，需要 11449 上的独立模型服务
 ```
 
-实测数据与已知限制见 [docs/TESTING.zh-CN.md](docs/TESTING.zh-CN.md) 和 [0.5.1 变更记录](CHANGELOG.md)。查词评测可加 `--baseline`、`--marked` 比较原流程和只标记目标的方案。
+实测数据与已知限制见 [docs/TESTING.zh-CN.md](docs/TESTING.zh-CN.md) 和 [0.5.2 变更记录](CHANGELOG.md)。查词评测可加 `--baseline`、`--marked` 比较原流程和只标记目标的方案。
 
 ## 隐私
 

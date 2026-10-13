@@ -30,6 +30,55 @@ struct AppError: LocalizedError {
     init(_ message: String) { self.message = message }
 }
 
+// Timing-only diagnostics are opt-in and cannot write into the real classroom library.
+// One file per run, so audio, recognition, main-thread and translation rows share a clock.
+final class SpeechDiagnostics: @unchecked Sendable {
+    static let shared = SpeechDiagnostics()
+    private let queue = DispatchQueue(label: "ClairClass.speech.diagnostics", qos: .utility)
+    private let destination: URL
+    private let started = ProcessInfo.processInfo.systemUptime
+    private var previous: [String: Double] = [:]
+    private var probe: DispatchSourceTimer?
+
+    private init?() {
+        guard CommandLine.arguments.contains("-ClairClassSpeechDiagnostics"),
+              let root = WorkspaceConfiguration.testRoot else { return nil }
+        destination = URL(fileURLWithPath: root).appendingPathComponent("speech-timing-\(UUID().uuidString).jsonl")
+        // A main-queue probe every 100 ms; one that runs late means the main thread was busy.
+        let probe = DispatchSource.makeTimerSource(queue: queue)
+        probe.schedule(deadline: .now(), repeating: .milliseconds(100))
+        probe.setEventHandler { [self] in
+            let posted = ProcessInfo.processInfo.systemUptime
+            DispatchQueue.main.async { [self] in
+                let lag = (ProcessInfo.processInfo.systemUptime - posted) * 1000
+                if lag >= 50 { record("mainLag", values: ["lagMs": lag]) }
+            }
+        }
+        probe.resume(); self.probe = probe
+    }
+
+    func record(_ kind: String, values: [String: Double]) {
+        let now = ProcessInfo.processInfo.systemUptime - started
+        queue.async { [self] in
+            var row: [String: Any] = values
+            row["kind"] = kind; row["elapsedSeconds"] = now
+            if let last = previous[kind] { row["gapSeconds"] = now - last }
+            previous[kind] = now
+            guard var data = try? JSONSerialization.data(withJSONObject: row, options: .sortedKeys) else { return }
+            data.append(10)
+            do {
+                try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+                if !FileManager.default.fileExists(atPath: destination.path) {
+                    FileManager.default.createFile(atPath: destination.path, contents: nil)
+                }
+                let file = try FileHandle(forWritingTo: destination)
+                defer { try? file.close() }
+                try file.seekToEnd(); try file.write(contentsOf: data)
+            } catch { NSLog("Clair speech timing: %@", error.localizedDescription) }
+        }
+    }
+}
+
 // Capture callbacks run on audio queues. Own every buffer before leaving them;
 // convert serially and send monotonically timed PCM to SpeechAnalyzer.
 final class AudioSink: @unchecked Sendable {
@@ -40,19 +89,23 @@ final class AudioSink: @unchecked Sendable {
     private var inputFormat: AVAudioFormat?
     private var frames: Int64 = 0
     private var closed = false
+    private let diagnostics: SpeechDiagnostics?
+    private var lastDiagnosticFrame: Int64 = 0
     private let meter: @Sendable (Float) -> Void
     private let failure: @Sendable (String) -> Void
 
     init(format: AVAudioFormat, continuation: AsyncStream<AnalyzerInput>.Continuation,
          meter: @escaping @Sendable (Float) -> Void,
-         failure: @escaping @Sendable (String) -> Void) {
+         failure: @escaping @Sendable (String) -> Void, diagnostics: SpeechDiagnostics? = nil) {
         self.format = format
         self.continuation = continuation
         self.meter = meter
         self.failure = failure
+        self.diagnostics = diagnostics
     }
 
     func accept(_ buffer: AVAudioPCMBuffer) {
+        let received = ProcessInfo.processInfo.systemUptime
         guard buffer.frameLength > 0,
               let owned = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: buffer.frameLength) else { return }
         owned.frameLength = buffer.frameLength
@@ -94,6 +147,11 @@ final class AudioSink: @unchecked Sendable {
             }
             let time = CMTime(value: frames, timescale: Int32(format.sampleRate))
             frames += Int64(output.frameLength)
+            if diagnostics != nil, frames - lastDiagnosticFrame >= Int64(format.sampleRate) {
+                lastDiagnosticFrame = frames
+                diagnostics?.record("audio", values: ["audioSeconds": Double(frames) / format.sampleRate,
+                    "queueAndConversionMs": (ProcessInfo.processInfo.systemUptime - received) * 1000])
+            }
             continuation.yield(AnalyzerInput(buffer: output, bufferStartTime: time))
         }
     }
@@ -220,20 +278,25 @@ final class SpeechCapture {
             throw AppError("没有可用的语音识别音频格式。")
         }
         let (stream, continuation) = AsyncStream<AnalyzerInput>.makeStream()
+        let diagnostics = SpeechDiagnostics.shared
         let sink = AudioSink(format: format, continuation: continuation,
             meter: { level in Task { @MainActor in meter(level) } },
-            failure: { message in Task { @MainActor in failure(message) } })
+            failure: { message in Task { @MainActor in failure(message) } }, diagnostics: diagnostics)
         self.sink = sink; self.analyzer = analyzer
         resultsTask = Task { @MainActor in
             do {
                 for try await result in transcriber.results {
                     guard !Task.isCancelled else { break }
+                    let received = ProcessInfo.processInfo.systemUptime
                     let words = Self.wordConfidences(in: result.text)
                     event(SpeechEvent(start: result.range.start.seconds, duration: result.range.duration.seconds,
                          text: String(result.text.characters), isFinal: result.isFinal,
                          confidence: Self.confidence(of: result.text),
                          uncertainWords: words.filter { $0.1 < TranscriptRules.uncertainWord && TranscriptRules.isContentWord($0.0) }.map(\.0),
                          wordConfidences: words))
+                    diagnostics?.record("speech", values: ["audioEndSeconds": result.range.end.seconds,
+                        "final": result.isFinal ? 1 : 0, "characters": Double(result.text.characters.count),
+                        "deliveryMs": (ProcessInfo.processInfo.systemUptime - received) * 1000])
                 }
             } catch {
                 if !Task.isCancelled { failure("法语转写中断：\(error.localizedDescription)") }

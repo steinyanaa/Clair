@@ -12,9 +12,12 @@ The full log in Chinese is in [TESTING.zh-CN.md](TESTING.zh-CN.md).
 | `scripts/test.sh --bench` | Library save / load timings on 200 one-hour classes | nothing |
 | `scripts/test.sh --recognize <audio>` | Recognition output with per-word confidence | French speech assets |
 | `scripts/test.sh --pipeline <audio> [--realtime]` | Recognition → translation → save → reload | running model service |
+| `scripts/test-captions.sh` | Caption layout in a hidden window: drafts, settled lines, width changes, unchanged row height while a line is re-translated | nothing |
 | `scripts/test.sh --model` / `--study` | Translation samples / assistant minutes and cited answers | models |
 
 `scripts/make-sample-audio.sh` synthesises the public test lecture from `Tests/french-sample.txt`.
+
+Timing diagnostics for live captions: launch a separate dev build with `-ClairClassDataRoot <temporary-directory> -ClairClassSpeechDiagnostics` (also accepted by `scripts/test.sh --recognize/--pipeline`). One timing-only JSONL file per run is written into that directory; it contains no audio or transcript text. The 0.5.2 measurements are in the [changelog](../CHANGELOG.md).
 
 ## Recognition under interference
 

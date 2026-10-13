@@ -36,7 +36,8 @@ struct TranscriptPane: View {
                         ForEach(lines) { line in
                             TranscriptRow(line: line, showFrench: controller.showFrench, fontSize: controller.fontSize,
                                           markUncertain: controller.markUncertain,
-                                          isPending: controller.isPending(line.id), highlighted: highlighted == line.id,
+                                          isPending: controller.isPending(line.id), isRevising: controller.isRevising(line.id),
+                                          highlighted: highlighted == line.id,
                                           editable: controller.session.deletedAt == nil, lookupEnabled: wordLookup,
                                           retranslate: { controller.retranslate(line.id) },
                                           lookup: { try await controller.lookUp($0, lemma: $1, in: $2, range: $3) })
@@ -144,6 +145,8 @@ struct TranscriptRow: View, Equatable {
     let fontSize: Double
     let markUncertain: Bool
     let isPending: Bool
+    /// The French changed since this Chinese was made; a new translation is on its way.
+    var isRevising = false
     let highlighted: Bool
     let editable: Bool
     let lookupEnabled: Bool
@@ -153,7 +156,21 @@ struct TranscriptRow: View, Equatable {
 
     nonisolated static func == (a: Self, b: Self) -> Bool {
         a.line == b.line && a.showFrench == b.showFrench && a.fontSize == b.fontSize && a.markUncertain == b.markUncertain &&
-            a.isPending == b.isPending && a.highlighted == b.highlighted && a.editable == b.editable && a.lookupEnabled == b.lookupEnabled
+            a.isPending == b.isPending && a.isRevising == b.isRevising && a.highlighted == b.highlighted && a.editable == b.editable && a.lookupEnabled == b.lookupEnabled
+    }
+
+    private var sourceSize: CGFloat { max(13, (fontSize * 0.76).rounded()) }
+    private var markedSource: AttributedString {
+        var result = AttributedString(line.french)
+        guard markUncertain, line.isFinal else { return result }
+        var cursor = result.startIndex
+        for word in TranscriptRules.markedWords(line) {
+            guard let range = result[cursor...].range(of: word, options: .caseInsensitive) else { continue }
+            result[range].foregroundColor = Palette.clayInk
+            result[range].underlineStyle = Text.LineStyle(pattern: .dot, color: Palette.clay)
+            cursor = range.upperBound
+        }
+        return result
     }
 
     private var doubtLabel: String { "这一句识别可能有误 · \(TranscriptRules.markedWords(line).count) 个词存疑" }
@@ -171,9 +188,15 @@ struct TranscriptRow: View, Equatable {
                 .opacity(hovering || highlighted ? 1 : 0)
             VStack(alignment: .leading, spacing: Spacing.xs + Spacing.xxs) {
                 if showFrench {
-                    FrenchLine(text: line.french, uncertain: markUncertain ? TranscriptRules.markedWords(line) : [],
-                               size: max(13, (fontSize * 0.76).rounded()), settled: line.isFinal,
-                               lookupEnabled: lookupEnabled, lookup: lookup)
+                    if line.isFinal && lookupEnabled {
+                        FrenchLine(text: line.french, uncertain: markUncertain ? TranscriptRules.markedWords(line) : [],
+                                   size: sourceSize, settled: true, lookupEnabled: true, lookup: lookup)
+                    } else {
+                        // Progressive speech changes several times a second; it cannot be looked up yet.
+                        Text(markedSource).font(.french(sourceSize))
+                            .foregroundStyle(line.isFinal ? Palette.ink2 : Palette.ink3).lineSpacing(3)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
                 if markUncertain, TranscriptRules.isDoubtful(line) {
                     Label(doubtLabel, systemImage: "waveform.badge.exclamationmark")
@@ -205,8 +228,11 @@ struct TranscriptRow: View, Equatable {
 
     @ViewBuilder private var translation: some View {
         if !line.chinese.isEmpty {
-            Text(line.chinese).font(.system(size: fontSize)).foregroundStyle(Palette.ink).lineSpacing(6).help(sourceHelp)
-            if isFallback || isPending {
+            // A revised line keeps its earlier Chinese, dimmed and without a status row, so
+            // live captions do not blank and jump while the new translation is made.
+            Text(line.chinese).font(.system(size: fontSize)).foregroundStyle(isRevising ? Palette.ink3 : Palette.ink)
+                .lineSpacing(6).help(isRevising ? "原文刚更新，正在重新翻译" : sourceHelp)
+            if isFallback || isPending && !isRevising {
                 HStack(spacing: Spacing.xs) {
                     if isPending { ProgressView().controlSize(.mini); Text(isFallback ? "正在用 Gemma 改进译文…" : "正在重新翻译…") }
                     else { Image(systemName: "arrow.triangle.2.circlepath"); Text(line.backend) }

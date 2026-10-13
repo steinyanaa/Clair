@@ -64,13 +64,24 @@ struct TestMain {
                 return
             }
             if let index = arguments.firstIndex(of: "--recognize"), arguments.count > index + 1 {
+                guard await SpeechTranscriber.installedLocales.contains(where: { $0.identifier == "fr_FR" || $0.identifier == "fr-FR" }) else {
+                    throw AppError("Offline recognition test requires installed French speech assets")
+                }
                 let capture = SpeechCapture()
                 var events: [SpeechEvent] = []
+                var arrivals: [Double] = []
                 var failure: String?
                 var finished = false
-                try await capture.transcribeFile(URL(fileURLWithPath: arguments[index + 1]),
-                    event: { events.append($0) }, failure: { failure = $0; finished = true }, completed: { finished = true })
                 let start = Date()
+                try await capture.transcribeFile(URL(fileURLWithPath: arguments[index + 1]),
+                    realtime: arguments.contains("--realtime"),
+                    event: { event in
+                        let elapsed = Date().timeIntervalSince(start)
+                        let gap = elapsed - (arrivals.last ?? 0)
+                        arrivals.append(elapsed); events.append(event)
+                        printJSON(["speechArrivalSeconds": elapsed, "gapSeconds": gap, "final": event.isFinal,
+                                   "audioEndSeconds": event.start + event.duration, "characters": event.text.count])
+                    }, failure: { failure = $0; finished = true }, completed: { finished = true })
                 while !finished && Date().timeIntervalSince(start) < 100 { try await Task.sleep(for: .milliseconds(100)) }
                 if !finished { await capture.stop(); throw AppError("Speech test timed out") }
                 if let failure { throw AppError(failure) }
@@ -105,7 +116,7 @@ struct TestMain {
             try check(decoded.lines == sample.lines)
             try check(TranscriptRules.srt(sample).contains("00:00:01,200 --> 00:00:04,000"))
             let temporary = FileManager.default.temporaryDirectory.appendingPathComponent("ClairClassLibraryTest-" + UUID().uuidString)
-            defer { try? FileManager.default.removeItem(at: temporary) }
+            defer { try? FileManager.default.trashItem(at: temporary, resultingItemURL: nil) }
             let library = LibraryStore(workspace: WorkspaceConfiguration(projectRoot: temporary.path))
             let project = ClassProject(name: "经济学")
             try library.saveProjects([project]); try library.save(sample)
@@ -154,7 +165,7 @@ struct TestMain {
             // Permanent delete: only from Recently Deleted, every stored copy removed,
             // and an open class is discarded without being written back.
             let purgeRoot = FileManager.default.temporaryDirectory.appendingPathComponent("ClairClassPurgeTest-" + UUID().uuidString)
-            defer { try? FileManager.default.removeItem(at: purgeRoot) }
+            defer { try? FileManager.default.trashItem(at: purgeRoot, resultingItemURL: nil) }
             let purgeLibrary = LibraryStore(workspace: WorkspaceConfiguration(projectRoot: purgeRoot.path))
             var live = ClassSession(); live.title = "保留"; live.lines = [requested]
             var trashed = ClassSession(); trashed.title = "删除"; trashed.lines = [requested]; trashed.deletedAt = Date()
@@ -191,8 +202,12 @@ struct TestMain {
             try check(!TranscriptRules.shouldMerge(previous: finished, next: next), "A finished sentence never absorbs the next one")
             var distant = next; distant.start = 12
             try check(!TranscriptRules.shouldMerge(previous: first, next: distant), "A long silence starts a new sentence")
+            try check(TranscriptRules.translationHold("Si les taux", isFinal: false) == TranscriptRules.draftFragmentHold
+                      && TranscriptRules.translationHold("Si les taux augmentent.", isFinal: false) == TranscriptRules.draftHold
+                      && TranscriptRules.translationHold("Si les taux augmentent.", isFinal: true) == 0
+                      && TranscriptRules.translationHold("Si les taux", isFinal: true) == TranscriptRules.unfinishedHold, "Translation holds")
             let mergeRoot = FileManager.default.temporaryDirectory.appendingPathComponent("ClairClassMergeTest-" + UUID().uuidString)
-            defer { try? FileManager.default.removeItem(at: mergeRoot) }
+            defer { try? FileManager.default.trashItem(at: mergeRoot, resultingItemURL: nil) }
             let captioner = ClassController(workspace: WorkspaceConfiguration(projectRoot: mergeRoot.path))
             captioner.newSession()
             captioner.receive(SpeechEvent(start: 0, duration: 2, text: "Si les taux augmentent", isFinal: true, confidence: 0.96), token: captioner.captureID)
@@ -204,6 +219,35 @@ struct TestMain {
                       "Merged lines: \(captioner.session.lines.map(\.french))")
             try check(captioner.session.lines[0].confidence == 0.7 && captioner.session.lines[0].end == 4.5, "Merged line keeps the lowest confidence and the later end")
             captioner.shutdown()
+            // A revised line keeps its earlier Chinese on screen, never in storage, until replaced.
+            let reviser = ClassController(workspace: WorkspaceConfiguration(projectRoot: mergeRoot.path))
+            reviser.newSession()
+            reviser.receive(SpeechEvent(start: 0, duration: 2, text: "Les taux montent.", isFinal: false), token: reviser.captureID)
+            let revisedID = reviser.session.lines[0].id
+            reviser.session.lines[0].chinese = "旧译文"
+            reviser.receive(SpeechEvent(start: 0, duration: 2.5, text: "Les taux augmentent.", isFinal: false), token: reviser.captureID)
+            try check(reviser.session.lines[0].chinese == "旧译文" && reviser.isRevising(revisedID) && reviser.isPending(revisedID),
+                      "Revised draft keeps its earlier Chinese while queued")
+            try check(reviser.settledSession.lines[0].chinese.isEmpty, "Provisional Chinese is not stored")
+            reviser.save()
+            try check(LibraryStore(workspace: WorkspaceConfiguration(projectRoot: mergeRoot.path)).load()
+                .first(where: { $0.id == reviser.session.id })?.lines.first?.chinese == "", "Saved class has no provisional Chinese")
+            reviser.receive(SpeechEvent(start: 3, duration: 1, text: "et les ménages", isFinal: false), token: reviser.captureID)
+            reviser.session.lines[1].chinese = "旧片段"
+            reviser.receive(SpeechEvent(start: 0, duration: 2.5, text: "Les taux augmentent", isFinal: true), token: reviser.captureID)
+            reviser.receive(SpeechEvent(start: 3, duration: 1.5, text: "et les ménages empruntent moins.", isFinal: true), token: reviser.captureID)
+            try check(reviser.session.lines.count == 1 && reviser.session.lines[0].french == "Les taux augmentent et les ménages empruntent moins."
+                      && !reviser.session.lines[0].chinese.isEmpty && reviser.isRevising(revisedID), "Merged line keeps its Chinese while re-translated")
+            // Without the model or fallback the new translation fails: the earlier Chinese is withdrawn.
+            let priorFallback = reviser.allowFallback
+            reviser.allowFallback = false
+            let waitStart = Date()
+            while reviser.isPending(revisedID) && Date().timeIntervalSince(waitStart) < 15 { try await Task.sleep(for: .milliseconds(100)) }
+            reviser.allowFallback = priorFallback
+            let settled = reviser.session.lines[0]
+            try check(!reviser.isRevising(revisedID) && settled.chinese != "旧译文" && settled.chinese != "旧片段"
+                      && (!settled.chinese.isEmpty || settled.error != nil), "Provisional Chinese is replaced or withdrawn")
+            reviser.shutdown()
             // Uncertain-word marks: content words of final lines only; a line is called out only when garbled.
             try check(TranscriptRules.isContentWord("étoiles") && TranscriptRules.isContentWord("l'augmentation"))
             try check(!TranscriptRules.isContentWord("Ce") && !TranscriptRules.isContentWord("qu'on") && !TranscriptRules.isContentWord("d'une") && !TranscriptRules.isContentWord("2,5"))
@@ -215,7 +259,7 @@ struct TestMain {
             var garbled = TranscriptLine(id: "g", start: 0, french: "les banques sont étoiles si les taux augmente le ménage en train de loin", isFinal: true)
             garbled.uncertainWords = ["étoiles", "ménage", "train", "loin"]
             try check(TranscriptRules.isDoubtful(garbled))
-            printJSON(["sentenceRepair": "passed", "fillerCleanup": "passed", "continuationMerge": "passed", "uncertainMarks": "passed"])
+            printJSON(["sentenceRepair": "passed", "fillerCleanup": "passed", "continuationMerge": "passed", "provisionalChinese": "passed", "uncertainMarks": "passed"])
             // Word lookup: elisions are stripped, verbs get their base form, sentence-like answers are rejected.
             try check(WordLookup.clean("l’augmentation") == "augmentation" && WordLookup.clean("qu'ils") == "ils" && WordLookup.clean("d’intérêt,") == "intérêt")
             try check(WordLookup.clean("en revanche") == "en revanche" && WordLookup.clean("Deux.") == "Deux" && WordLookup.clean("l'") == "l")
@@ -264,6 +308,14 @@ struct TestMain {
             try check(positionController.lookupCache.count == 3, "Cache distinguishes occurrence, lemma and preset")
             let grammarMeaning = try await positionController.lookUp("en", lemma: nil, in: "en janvier", range: NSRange(location: 0, length: 2))
             try check(grammarMeaning.isGrammar && grammarMeaning.inSentence == nil && grammarMeaning.backend == "内置法语用法")
+            let cancelledLookup = Task { @MainActor in
+                try await positionController.lookUp("en", lemma: nil, in: "en janvier", range: NSRange(location: 0, length: 2))
+            }
+            cancelledLookup.cancel()
+            do {
+                _ = try await cancelledLookup.value
+                throw AppError("Cancelled lookup must not return cached results")
+            } catch is CancellationError { }
             positionController.shutdown()
             // A saved class is continued, not replaced, by the start action.
             let resumable = ClassController(workspace: WorkspaceConfiguration(projectRoot: mergeRoot.path))
@@ -284,7 +336,7 @@ struct TestMain {
                       && framed.hasSuffix("Please translate only the following French text into Chinese:\n\n\nDeux."))
             preset = ClassPreset(); try check(preset.isDefault && LocalModel.contextBlocks(TranslationContext(preset: preset)).isEmpty)
             let contextRoot = FileManager.default.temporaryDirectory.appendingPathComponent("ClairContextTest-" + UUID().uuidString)
-            defer { try? FileManager.default.removeItem(at: contextRoot) }
+            defer { try? FileManager.default.trashItem(at: contextRoot, resultingItemURL: nil) }
             let lecture = ClassController(workspace: WorkspaceConfiguration(projectRoot: contextRoot.path))
             lecture.newSession()
             lecture.setPreset(ClassPreset(subject: .law, topic: "Droit constitutionnel"))
@@ -398,7 +450,7 @@ struct TestMain {
             return record
         }
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("ClairClassBench-" + UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: root) }
+        defer { try? FileManager.default.trashItem(at: root, resultingItemURL: nil) }
         let library = LibraryStore(workspace: WorkspaceConfiguration(projectRoot: root.path))
         for _ in 0..<199 { try library.save(lecture(1200)) }
         var live = lecture(1200)

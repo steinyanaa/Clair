@@ -107,6 +107,16 @@ enum TranscriptRules {
     }
     /// An unfinished sentence waits this long for its continuation before translation.
     static let unfinishedHold: TimeInterval = 1.2
+    /// How long a line waits after its last change before translation. The recogniser
+    /// revises a draft about once a second (bursts up to 1.18 s apart in replays), so an
+    /// unfinished trailing sentence waits until it has really stopped changing; at 0.8 s
+    /// about three in four draft requests were discarded as stale.
+    static let draftHold: TimeInterval = 0.8
+    static let draftFragmentHold: TimeInterval = 1.3
+    static func translationHold(_ text: String, isFinal: Bool) -> TimeInterval {
+        guard isFinal else { return endsSentence(text) ? draftHold : draftFragmentHold }
+        return endsSentence(text) ? 0 : unfinishedHold
+    }
     static let fallbackBackend = "系统翻译回退"
 
     static func endsSentence(_ text: String) -> Bool {
@@ -155,6 +165,10 @@ enum TranscriptRules {
             words.append(word)
         }
         return words.joined(separator: " ").trimmingCharacters(in: CharacterSet(charactersIn: ",;: ").union(.whitespaces))
+    }
+    /// Words only: case, punctuation and spacing removed.
+    static func wordKey(_ text: String) -> String {
+        text.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).joined(separator: " ")
     }
     static func mayApply(current: TranscriptLine, requested: TranscriptLine, sessionMatches: Bool) -> Bool {
         sessionMatches && current.id == requested.id && current.revision == requested.revision && current.french == requested.french
@@ -233,6 +247,11 @@ final class ClassController {
     /// Rows only show progress for these, never for work that was abandoned.
     private(set) var readyAt: [String: Date] = [:]
     private(set) var translatingLine: String?
+    /// Lines whose French changed after they were translated. The earlier Chinese stays
+    /// on screen, dimmed, until the new translation replaces it, so a revision does not
+    /// blank the line and re-flow the captions. It is never saved or exported.
+    private(set) var revising: Set<String> = []
+    func isRevising(_ id: String) -> Bool { revising.contains(id) }
     /// Fallback lines Gemma has already retried in this window, so failures are not looped.
     @ObservationIgnored private var upgradeTried: Set<String> = []
     @ObservationIgnored private var capture: SpeechCapture?
@@ -400,15 +419,18 @@ final class ClassController {
         guard TranscriptRules.hasSpeech(text) else { return }
         let anchor = token.uuidString + ":" + String(Int64(event.start * 1000)) + ":"
         let replaced = drafts.reconcile(anchor: anchor, event: event)
-        let replacedIDs = session.lines.filter { line in replaced.contains(where: { line.id.hasPrefix($0) }) }.map(\.id)
-        session.lines.removeAll { replacedIDs.contains($0.id) }
-        for id in replacedIDs { readyAt[id] = nil }
         // Hesitation-only pieces ("Euh…") carry nothing to translate.
         let parts = TranscriptRules.sentences(text).filter { TranscriptRules.hasSpeech(TranscriptRules.translationSource($0)) }
+        let partKeys = Set(parts.map(TranscriptRules.wordKey))
+        let replacedIDs = session.lines.filter { line in replaced.contains(where: { line.id.hasPrefix($0) }) }.map(\.id)
+        noteDiscarded(session.lines.filter { replacedIDs.contains($0.id) }, cause: 3, matching: partKeys)
+        session.lines.removeAll { replacedIDs.contains($0.id) }
+        for id in replacedIDs { readyAt[id] = nil; revising.remove(id) }
         let ids = Set(parts.indices.map { anchor + String($0) })
         let obsolete = session.lines.filter { $0.id.hasPrefix(anchor) && !ids.contains($0.id) }.map(\.id)
+        noteDiscarded(session.lines.filter { obsolete.contains($0.id) }, cause: 4, matching: partKeys)
         session.lines.removeAll { obsolete.contains($0.id) }
-        for id in obsolete { readyAt[id] = nil }
+        for id in obsolete { readyAt[id] = nil; revising.remove(id) }
         var characters = 0
         let eventEnd = captureOffset + max(0, event.start) + max(0, event.duration)
         for (partIndex, part) in parts.enumerated() {
@@ -431,8 +453,7 @@ final class ClassController {
     /// When a line may be translated: drafts wait for the recogniser to settle, and
     /// an unfinished sentence waits briefly for the chunk that completes it.
     private func translateAfter(_ text: String, isFinal: Bool) -> Date {
-        guard isFinal else { return Date().addingTimeInterval(0.8) }
-        return Date().addingTimeInterval(TranscriptRules.endsSentence(text) ? 0 : TranscriptRules.unfinishedHold)
+        Date().addingTimeInterval(TranscriptRules.translationHold(text, isFinal: isFinal))
     }
 
     private func updateLine(id: String, time: Double, end: Double, text: String, isFinal: Bool, confidence: Double?, uncertain: [String]) {
@@ -442,13 +463,16 @@ final class ClassController {
             session.lines[index].confidence = confidence
             session.lines[index].uncertainWords = uncertain.isEmpty ? nil : uncertain
             if session.lines[index].french != text {
+                noteDiscarded([session.lines[index]], cause: isFinal ? 2 : 1, matching: [TranscriptRules.wordKey(text)])
                 session.lines[index].french = text
                 session.lines[index].revision += 1
-                session.lines[index].chinese = ""; session.lines[index].backend = ""; session.lines[index].error = nil
+                keepWhileRevising(index)
                 readyAt[id] = translateAfter(text, isFinal: isFinal)
             }
             session.lines[index].isFinal = isFinal
-            if isFinal, session.lines[index].chinese.isEmpty { readyAt[id] = translateAfter(text, isFinal: true) }
+            if isFinal, session.lines[index].chinese.isEmpty || revising.contains(id), translatingLine != id {
+                readyAt[id] = translateAfter(text, isFinal: true)
+            }
         } else {
             var line = TranscriptLine(id: id, start: time, french: text, isFinal: isFinal)
             line.end = end; line.confidence = confidence; line.uncertainWords = uncertain.isEmpty ? nil : uncertain
@@ -464,17 +488,37 @@ final class ClassController {
         let previous = session.lines[index - 1], fragment = session.lines[index]
         guard !previous.id.hasPrefix(anchor), TranscriptRules.shouldMerge(previous: previous, next: fragment) else { return }
         let merged = TranscriptRules.join(previous.french, fragment.french)
+        noteDiscarded([previous], cause: 5, matching: [])
         session.lines[index - 1].french = merged
         session.lines[index - 1].end = fragment.end
         session.lines[index - 1].revision += 1
-        session.lines[index - 1].chinese = ""; session.lines[index - 1].backend = ""
-        session.lines[index - 1].error = nil; session.lines[index - 1].latency = nil
+        keepWhileRevising(index - 1)
         if let a = previous.confidence, let b = fragment.confidence { session.lines[index - 1].confidence = min(a, b) }
         let doubtful = (previous.uncertainWords ?? []) + (fragment.uncertainWords ?? [])
         session.lines[index - 1].uncertainWords = doubtful.isEmpty ? nil : doubtful
         session.lines.remove(at: index)
-        readyAt[fragment.id] = nil
+        readyAt[fragment.id] = nil; revising.remove(fragment.id)
         readyAt[previous.id] = translateAfter(merged, isFinal: true)
+    }
+
+    /// The French of a line changed: any Chinese on screen becomes provisional.
+    private func keepWhileRevising(_ index: Int) {
+        let id = session.lines[index].id
+        if session.lines[index].chinese.isEmpty { revising.remove(id) } else { revising.insert(id) }
+        session.lines[index].error = nil
+    }
+
+    /// Diagnostics only: a translation already on screen is superseded. Causes:
+    /// 1 draft revised, 2 text changed when final, 3 replaced by a re-timed segment,
+    /// 4 sentence split removed, 5 merged with its continuation. `sameWords` marks
+    /// changes of case or punctuation only; `kept` means it stays visible until replaced.
+    private func noteDiscarded(_ lines: [TranscriptLine], cause: Double, matching keys: Set<String>) {
+        guard let diagnostics = SpeechDiagnostics.shared else { return }
+        for line in lines where !line.chinese.isEmpty {
+            diagnostics.record("chineseSuperseded", values: ["cause": cause, "final": line.isFinal ? 1 : 0,
+                "sameWords": keys.contains(TranscriptRules.wordKey(line.french)) ? 1 : 0,
+                "kept": [1, 2, 5].contains(cause) ? 1 : 0])
+        }
     }
 
     func addText(_ french: String) {
@@ -500,7 +544,7 @@ final class ClassController {
             while !Task.isCancelled, self.session.id == sessionID {
                 let candidates = self.session.lines.filter { self.readyAt[$0.id] != nil }
                 // Queue entries without a line can only be leftovers; never wait on them.
-                if candidates.isEmpty { self.readyAt.removeAll() }
+                if candidates.isEmpty { self.readyAt.removeAll(); self.dropUnqueuedRevisions() }
                 if candidates.isEmpty {
                     // Nothing live to translate: let Gemma redo fallback lines, one at a
                     // time and never while capturing, so captions are never held up.
@@ -522,17 +566,27 @@ final class ClassController {
                 guard let line = candidates.first(where: { (self.readyAt[$0.id] ?? .distantFuture) <= Date() }) else {
                     try? await Task.sleep(for: .milliseconds(100)); continue
                 }
+                let waited = Date().timeIntervalSince(self.readyAt[line.id] ?? Date())
                 self.readyAt[line.id] = nil
                 self.translatingLine = line.id
                 self.translation.allowFallback = self.allowFallback
                 let outcome: Result<TranslationResult, Error>
                 let context = self.translationContext(before: line.id)
+                let requested = Date()
                 do { outcome = .success(try await self.translation.translate(TranscriptRules.translationSource(line.french), context: context)) }
                 catch { outcome = .failure(error) }
                 if self.translatingLine == line.id { self.translatingLine = nil }
-                guard !Task.isCancelled, self.session.id == sessionID,
-                      let index = self.session.lines.firstIndex(where: { $0.id == line.id }),
-                      TranscriptRules.mayApply(current: self.session.lines[index], requested: line, sessionMatches: true) else { continue }
+                let applies = !Task.isCancelled && self.session.id == sessionID &&
+                    self.session.lines.first(where: { $0.id == line.id }).map {
+                        TranscriptRules.mayApply(current: $0, requested: line, sessionMatches: true) } == true
+                SpeechDiagnostics.shared?.record("translation", values: [
+                    "holdMs": TranscriptRules.translationHold(line.french, isFinal: line.isFinal) * 1000,
+                    "waitedMs": waited * 1000, "requestMs": Date().timeIntervalSince(requested) * 1000,
+                    "final": line.isFinal ? 1 : 0, "sentenceEnds": TranscriptRules.endsSentence(line.french) ? 1 : 0,
+                    "hadChinese": line.chinese.isEmpty ? 0 : 1, "applied": applies ? 1 : 0, "queued": Double(candidates.count),
+                    "fallback": (try? outcome.get())?.backend == TranscriptRules.fallbackBackend ? 1 : 0,
+                    "failed": (try? outcome.get()) == nil ? 1 : 0])
+                guard applies, let index = self.session.lines.firstIndex(where: { $0.id == line.id }) else { continue }
                 switch outcome {
                 case .success(let result):
                     self.session.lines[index].chinese = result.text
@@ -541,9 +595,12 @@ final class ClassController {
                     self.session.lines[index].error = nil
                     self.translationMode = result.backend
                 case .failure(let error):
+                    // An earlier wording's Chinese must not stand in for the new French.
+                    if self.revising.contains(line.id) { self.session.lines[index].chinese = ""; self.session.lines[index].backend = "" }
                     self.session.lines[index].error = error.localizedDescription
                     self.translationMode = "翻译暂不可用"
                 }
+                self.revising.remove(line.id)
                 self.scheduleSave()
             }
             if self.session.id == sessionID { self.worker = nil; self.save() }
@@ -569,7 +626,25 @@ final class ClassController {
     }
 
     private func resetTranslationQueue() {
-        worker?.cancel(); worker = nil; readyAt.removeAll(); translatingLine = nil
+        worker?.cancel(); worker = nil; readyAt.removeAll(); translatingLine = nil; revising.removeAll()
+    }
+    /// A provisional translation with nothing queued to replace it is withdrawn.
+    private func dropUnqueuedRevisions() {
+        for id in revising where readyAt[id] == nil && translatingLine != id {
+            if let index = session.lines.firstIndex(where: { $0.id == id }) {
+                session.lines[index].chinese = ""; session.lines[index].backend = ""
+            }
+            revising.remove(id)
+        }
+    }
+    /// The class as it may be stored or exported: provisional Chinese left out.
+    var settledSession: ClassSession {
+        guard !revising.isEmpty else { return session }
+        var record = session
+        for index in record.lines.indices where revising.contains(record.lines[index].id) {
+            record.lines[index].chinese = ""; record.lines[index].backend = ""
+        }
+        return record
     }
 
     func newSession() {
@@ -599,12 +674,13 @@ final class ClassController {
         guard !session.lines.isEmpty else { return }
         if isRecording, !isImporting { session.duration = max(session.duration, elapsed) }
         // Switching between classes saves the one being left; skip it when unchanged.
-        if let saved = history.first(where: { $0.id == session.id }), saved == session { return }
+        let record = settledSession
+        if let saved = history.first(where: { $0.id == record.id }), saved == record { return }
         do {
-            try library.save(session)
-            UserDefaults.standard.set(session.id.uuidString, forKey: PreferenceKey.lastClass)
-            if let index = history.firstIndex(where: { $0.id == session.id }) { history[index] = session }
-            else { history.insert(session, at: 0) }
+            try library.save(record)
+            UserDefaults.standard.set(record.id.uuidString, forKey: PreferenceKey.lastClass)
+            if let index = history.firstIndex(where: { $0.id == record.id }) { history[index] = record }
+            else { history.insert(record, at: 0) }
         } catch { self.error = "记录保存失败：\(error.localizedDescription)" }
     }
     func loadHistory() {
@@ -693,7 +769,8 @@ final class ClassController {
         panel.allowedContentTypes = [srt ? UTType(filenameExtension: "srt") ?? .plainText : .plainText]
         panel.nameFieldStringValue = Self.fileName(session.title) + (srt ? ".srt" : ".txt")
         if panel.runModal() == .OK, let url = panel.url {
-            do { try (srt ? TranscriptRules.srt(session) : TranscriptRules.plainText(session)).write(to: url, atomically: true, encoding: .utf8) }
+            let record = settledSession
+            do { try (srt ? TranscriptRules.srt(record) : TranscriptRules.plainText(record)).write(to: url, atomically: true, encoding: .utf8) }
             catch { self.error = "导出失败：\(error.localizedDescription)" }
         }
     }
