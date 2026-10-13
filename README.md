@@ -54,7 +54,7 @@ scripts/test.sh --study                  # class assistant, needs the assistant 
 scripts/test.sh --lookup -ClairClassDataRoot /tmp/ClairLookup   # lookup evaluation, needs a separate service on 11449
 ```
 
-Measured results and known limits are in [docs/TESTING.md](docs/TESTING.md) and the [0.5.2 changelog](CHANGELOG.md). The lookup evaluation also supports `--baseline` and `--marked` for comparisons.
+Measured results and known limits are in [docs/TESTING.md](docs/TESTING.md) and the [0.5.3 changelog](CHANGELOG.md). The lookup evaluation also supports `--baseline` and `--marked` for comparisons.
 
 ## Privacy
 

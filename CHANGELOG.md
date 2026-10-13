@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.5.3] - 2026-10-13
+
+### Fixed
+- **Captions no longer collide with the toolbar or the floating controls.** The transcript fades out over 20 pt below the toolbar and 28 pt above the capture controls, instead of slicing a line in half at the top and showing blurred captions through the controls and the model status at the bottom. The newest caption stays clear of the fade (the column already ends 24 pt above the controls). Off-screen captures of the real window, dark and light, reviewing and recording, confirm both edges.
+- **A re-timed sentence keeps its translation.** When the recogniser moves the start of a segment while finalising it, its lines are replaced by new ones; a new line with the same words (only case or punctuation differ) now keeps the earlier Chinese instead of blanking and translating again. Lines with different words are still translated afresh; provisional (dimmed) Chinese is never carried over. In the 4-minute microphone session of 0.5.2, all 5 remaining blanks were of this kind.
+
+### Changed
+- **Assistant citations are links in the text.** A `[mm:ss]` citation that matches a caption now shows as a small clay timecode inside the sentence; clicking it opens that caption. One that matches no caption shows in grey and is not clickable (previously it looked like a citation but had no button). The separate row of citation buttons under each answer is gone; Copy remains. Blocks in an answer are spaced 12 pt apart (was 8 pt) and tables get a little more room.
+- Wording: 「这一句识别可能有误 · 3 个词存疑」 → 「3 个词识别存疑」; fallback lines are labelled 「系统备用翻译」 (the stored backend name is unchanged, so older classes still match); an untranslated line offers 「翻译这一句」 instead of 「尚未翻译 翻译」, and keeps 「尚未翻译」 only where the class cannot be edited.
+- Class and capture lengths of an hour or more read `1:10:00` instead of `70:00` (class list, class header, recording and import clocks). Line timecodes keep `mm:ss`, which assistant citations and exports match against.
+- Warnings and status dots use the design palette instead of system orange and green: translation errors, assistant failures and the error banner use clay ink, matching the 重试 action beside them; the model status dot in the transcript and Settings uses `ready` / clay.
+
+### Validation
+- `scripts/test.sh` passed all 21 reported groups three times in a row (new checks: class lengths over an hour; same-words re-timing keeps its translation; different words are translated again). The eight caption-layout scenarios passed, including citation links (only matching timecodes link to the transcript; brackets removed). Clicking a citation was not exercised in an automated test.
+- Full-window real-time replay with the edge fade: main-thread lag p99 20.6 ms, max 29.7 ms, none over 50 ms (unchanged from 0.5.2); translation timing unchanged (draft sentences 1.27 s, finals 1.62 s median); 12 of 59 shown translations superseded, none blanked. Window-server compositing cost of the mask was not measured.
+
 ## [0.5.2] - 2026-10-12
 
 ### Fixed

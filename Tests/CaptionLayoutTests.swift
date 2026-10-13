@@ -58,6 +58,12 @@ import SwiftUI
         let blanked = height("", pending: true, revising: false)
         precondition(abs(translated - revising) < 1, "Revising must not change the row height (\(translated) vs \(revising))")
         print("captionLayout: row height translated \(translated), revising \(revising), cleared-and-waiting \(blanked)")
-        print("captionLayout: passed (draft, final, edited text, narrower width, restored width, disabled lookup, revising height)")
+        // Assistant citations: a matching timecode is a link into the transcript, another stays plain.
+        let cited = MarkdownReading.inline("可能减缓投资 [00:33]，还需看通胀 [00:52]", citations: ["00:33"])
+        let linked = cited.runs.compactMap { run in run.link.map { (String(cited.characters[run.range]), $0.absoluteString) } }
+        precondition(String(cited.characters) == "可能减缓投资 00:33，还需看通胀 00:52", "Citation brackets are removed")
+        precondition(linked.count == 1 && linked[0].0 == "00:33" && linked[0].1 == MarkdownReading.sourceScheme + ":00:33",
+                     "Only matching citations link to the transcript: \(linked)")
+        print("captionLayout: passed (draft, final, edited text, narrower width, restored width, disabled lookup, revising height, citation links)")
     }
 }

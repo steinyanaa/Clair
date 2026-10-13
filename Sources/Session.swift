@@ -177,6 +177,13 @@ enum TranscriptRules {
         let value = max(0, Int(seconds.isFinite ? seconds : 0))
         return String(format: "%02d:%02d", value / 60, value % 60)
     }
+    /// Length of a class or capture. An hour or more reads 1:10:00 instead of 70:00.
+    /// Line timecodes keep `timecode`, which citations and exports match against.
+    static func duration(_ seconds: Double) -> String {
+        let value = max(0, Int(seconds.isFinite ? seconds : 0))
+        guard value >= 3600 else { return timecode(seconds) }
+        return String(format: "%d:%02d:%02d", value / 3600, value / 60 % 60, value % 60)
+    }
     static func plainText(_ session: ClassSession) -> String {
         session.title + "\n" + session.created.formatted(date: .abbreviated, time: .shortened) + "\n\n" +
         session.lines.map { "[\(timecode($0.start))]\n\($0.french)\n\($0.chinese.isEmpty ? ($0.error ?? "译文尚未完成") : $0.chinese)\n" }.joined(separator: "\n")
@@ -423,11 +430,15 @@ final class ClassController {
         let parts = TranscriptRules.sentences(text).filter { TranscriptRules.hasSpeech(TranscriptRules.translationSource($0)) }
         let partKeys = Set(parts.map(TranscriptRules.wordKey))
         let replacedIDs = session.lines.filter { line in replaced.contains(where: { line.id.hasPrefix($0) }) }.map(\.id)
+        let ids = Set(parts.indices.map { anchor + String($0) })
+        let obsolete = session.lines.filter { $0.id.hasPrefix(anchor) && !ids.contains($0.id) }.map(\.id)
+        // A re-timed or re-split sentence with the same words keeps its translation.
+        var reusable: [String: TranscriptLine] = [:]
+        for line in session.lines where (replacedIDs.contains(line.id) || obsolete.contains(line.id))
+            && !line.chinese.isEmpty && !revising.contains(line.id) { reusable[TranscriptRules.wordKey(line.french)] = line }
         noteDiscarded(session.lines.filter { replacedIDs.contains($0.id) }, cause: 3, matching: partKeys)
         session.lines.removeAll { replacedIDs.contains($0.id) }
         for id in replacedIDs { readyAt[id] = nil; revising.remove(id) }
-        let ids = Set(parts.indices.map { anchor + String($0) })
-        let obsolete = session.lines.filter { $0.id.hasPrefix(anchor) && !ids.contains($0.id) }.map(\.id)
         noteDiscarded(session.lines.filter { obsolete.contains($0.id) }, cause: 4, matching: partKeys)
         session.lines.removeAll { obsolete.contains($0.id) }
         for id in obsolete { readyAt[id] = nil; revising.remove(id) }
@@ -442,7 +453,8 @@ final class ClassController {
                 : eventEnd
             let words = Set(part.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber && $0 != "'" && $0 != "’" }).map(String.init))
             let doubtful = event.uncertainWords.filter { words.contains($0.lowercased()) }
-            updateLine(id: id, time: time, end: end, text: part, isFinal: event.isFinal, confidence: event.confidence, uncertain: doubtful)
+            updateLine(id: id, time: time, end: end, text: part, isFinal: event.isFinal, confidence: event.confidence, uncertain: doubtful,
+                       reusing: reusable[TranscriptRules.wordKey(part)])
         }
         session.lines.sort { $0.start < $1.start }
         if event.isFinal { mergeContinuation(anchor: anchor) }
@@ -456,7 +468,8 @@ final class ClassController {
         Date().addingTimeInterval(TranscriptRules.translationHold(text, isFinal: isFinal))
     }
 
-    private func updateLine(id: String, time: Double, end: Double, text: String, isFinal: Bool, confidence: Double?, uncertain: [String]) {
+    private func updateLine(id: String, time: Double, end: Double, text: String, isFinal: Bool, confidence: Double?, uncertain: [String],
+                            reusing earlier: TranscriptLine? = nil) {
         if let index = session.lines.firstIndex(where: { $0.id == id }) {
             session.lines[index].start = time
             session.lines[index].end = end
@@ -476,8 +489,11 @@ final class ClassController {
         } else {
             var line = TranscriptLine(id: id, start: time, french: text, isFinal: isFinal)
             line.end = end; line.confidence = confidence; line.uncertainWords = uncertain.isEmpty ? nil : uncertain
+            if let earlier {
+                line.chinese = earlier.chinese; line.backend = earlier.backend; line.latency = earlier.latency
+            }
             session.lines.append(line)
-            readyAt[id] = translateAfter(text, isFinal: isFinal)
+            if earlier == nil { readyAt[id] = translateAfter(text, isFinal: isFinal) }
         }
     }
 
@@ -511,13 +527,15 @@ final class ClassController {
     /// Diagnostics only: a translation already on screen is superseded. Causes:
     /// 1 draft revised, 2 text changed when final, 3 replaced by a re-timed segment,
     /// 4 sentence split removed, 5 merged with its continuation. `sameWords` marks
-    /// changes of case or punctuation only; `kept` means it stays visible until replaced.
+    /// changes of case or punctuation only; `kept` means it stays visible until replaced
+    /// (or, for a re-timed line with the same words, is carried over as it is).
     private func noteDiscarded(_ lines: [TranscriptLine], cause: Double, matching keys: Set<String>) {
         guard let diagnostics = SpeechDiagnostics.shared else { return }
         for line in lines where !line.chinese.isEmpty {
+            let same = keys.contains(TranscriptRules.wordKey(line.french))
             diagnostics.record("chineseSuperseded", values: ["cause": cause, "final": line.isFinal ? 1 : 0,
-                "sameWords": keys.contains(TranscriptRules.wordKey(line.french)) ? 1 : 0,
-                "kept": [1, 2, 5].contains(cause) ? 1 : 0])
+                "sameWords": same ? 1 : 0,
+                "kept": [1, 2, 5].contains(cause) || cause >= 3 && same && !revising.contains(line.id) ? 1 : 0])
         }
     }
 

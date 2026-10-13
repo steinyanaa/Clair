@@ -190,7 +190,7 @@ struct ClassWindow: View {
                 }
             }
             if let error = controller.error {
-                Banner(symbol: "exclamationmark.triangle.fill", message: error, tint: .orange) {
+                Banner(symbol: "exclamationmark.triangle.fill", message: error, tint: Palette.clayInk) {
                     Button { controller.error = nil } label: { Image(systemName: "xmark") }
                         .buttonStyle(.borderless).help("关闭提示").accessibilityLabel("关闭提示")
                 }
@@ -612,7 +612,7 @@ struct ClassRow: View {
             }
             HStack(spacing: Spacing.xs) {
                 Image(systemName: AudioSource.symbol(forRecordSource: record.source)).accessibilityLabel(record.source)
-                Text(TranscriptRules.timecode(record.duration)).monospacedDigit()
+                Text(TranscriptRules.duration(record.duration)).monospacedDigit()
                 if let projectName {
                     Image(systemName: "folder").padding(.leading, Spacing.xs).accessibilityHidden(true)
                     Text(projectName).lineLimit(1)

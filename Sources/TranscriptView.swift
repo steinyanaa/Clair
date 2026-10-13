@@ -56,6 +56,7 @@ struct TranscriptPane: View {
                     .frame(maxWidth: .infinity)
                 }
             }
+            .edgeFade()
             .onScrollPhaseChange { _, phase in
                 userScrolling = phase == .interacting || phase == .decelerating || phase == .tracking
             }
@@ -173,11 +174,13 @@ struct TranscriptRow: View, Equatable {
         return result
     }
 
-    private var doubtLabel: String { "这一句识别可能有误 · \(TranscriptRules.markedWords(line).count) 个词存疑" }
+    private var doubtLabel: String { "\(TranscriptRules.markedWords(line).count) 个词识别存疑" }
     private var isFallback: Bool { line.backend == TranscriptRules.fallbackBackend }
+    /// Shown for fallback lines; the stored backend name stays unchanged for older classes.
+    private static let fallbackLabel = "系统备用翻译"
     private var sourceHelp: String {
         guard !line.backend.isEmpty else { return "" }
-        return line.backend + (line.latency.map { String(format: " · %.1f 秒", $0) } ?? "")
+        return (isFallback ? Self.fallbackLabel : line.backend) + (line.latency.map { String(format: " · %.1f 秒", $0) } ?? "")
     }
 
     var body: some View {
@@ -235,7 +238,7 @@ struct TranscriptRow: View, Equatable {
             if isFallback || isPending && !isRevising {
                 HStack(spacing: Spacing.xs) {
                     if isPending { ProgressView().controlSize(.mini); Text(isFallback ? "正在用 Gemma 改进译文…" : "正在重新翻译…") }
-                    else { Image(systemName: "arrow.triangle.2.circlepath"); Text(line.backend) }
+                    else { Image(systemName: "arrow.triangle.2.circlepath"); Text(Self.fallbackLabel) }
                 }
                 .font(.system(size: 12)).foregroundStyle(Palette.ink3)
             }
@@ -244,12 +247,12 @@ struct TranscriptRow: View, Equatable {
         } else {
             HStack(spacing: Spacing.s) {
                 if let error = line.error {
-                    Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
-                } else {
+                    Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(Palette.clayInk)
+                } else if !editable {
                     Text("尚未翻译").foregroundStyle(Palette.ink3)
                 }
                 if editable {
-                    Button(line.error == nil ? "翻译" : "重试", action: retranslate).buttonStyle(.plain).foregroundStyle(Palette.clayInk)
+                    Button(line.error == nil ? "翻译这一句" : "重试", action: retranslate).buttonStyle(.plain).foregroundStyle(Palette.clayInk)
                 }
             }
             .font(.system(size: 12))
@@ -302,7 +305,7 @@ struct TransportBar: View {
                 Circle().fill(controller.isPaused ? Palette.ink3 : Palette.clay).frame(width: 7, height: 7)
                     .background(Circle().fill(Palette.claySoft).frame(width: 13, height: 13).opacity(controller.isPaused ? 0 : 1))
                     .accessibilityHidden(true)
-                Text(TranscriptRules.timecode(controller.displayDuration)).font(.system(size: 14, weight: .medium).monospacedDigit())
+                Text(TranscriptRules.duration(controller.displayDuration)).font(.system(size: 14, weight: .medium).monospacedDigit())
                     .foregroundStyle(Palette.ink)
                 LiveWaveform(controller: controller, paused: controller.isPaused)
             }
@@ -321,7 +324,7 @@ struct TransportBar: View {
         case .importing:
             HStack(spacing: Spacing.s) {
                 ProgressView().controlSize(.small)
-                Text("正在转写音频 · " + TranscriptRules.timecode(controller.displayDuration)).monospacedDigit()
+                Text("正在转写音频 · " + TranscriptRules.duration(controller.displayDuration)).monospacedDigit()
                     .foregroundStyle(Palette.ink)
             }
             .padding(.horizontal, Spacing.m)
@@ -341,7 +344,7 @@ struct ModelStatus: View {
             if runtime.busy {
                 ProgressView().controlSize(.mini)
             } else {
-                Circle().fill(runtime.ready ? Palette.ready : Color.orange).frame(width: 6, height: 6)
+                Circle().fill(runtime.ready ? Palette.ready : Palette.clay).frame(width: 6, height: 6)
             }
             Text(([modelText] + notices).joined(separator: " · ")).lineLimit(1)
         }
@@ -448,7 +451,7 @@ struct ClassHeader: View {
     private var session: ClassSession { controller.session }
     private var meta: String {
         [session.created.formatted(.dateTime.month().day().hour().minute()), session.source,
-         TranscriptRules.timecode(session.duration), "\(session.lines.count) 句"].joined(separator: " · ")
+         TranscriptRules.duration(session.duration), "\(session.lines.count) 句"].joined(separator: " · ")
     }
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.s) {

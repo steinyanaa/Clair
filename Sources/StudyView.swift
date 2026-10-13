@@ -135,28 +135,14 @@ struct StudyMessageView: View {
                         .padding(.vertical, Spacing.s)
                 case "failed":
                     HStack(alignment: .firstTextBaseline, spacing: Spacing.m) {
-                        Label(message.text, systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
+                        Label(message.text, systemImage: "exclamationmark.triangle").foregroundStyle(Palette.clayInk)
                         if message.request != nil { Button("重试", action: retry).buttonStyle(GhostButtonStyle()).disabled(busy) }
                     }
                     .font(.callout)
                 default:
-                    MarkdownReading(text: message.text)
-                    ScrollView(.horizontal) {
-                        HStack(spacing: Spacing.s - Spacing.xxs) {
-                            ForEach(citations, id: \.self) { time in
-                                Button { showSource(time) } label: {
-                                    Label(time, systemImage: "text.quote").labelStyle(ComposerLabelStyle()).monospacedDigit()
-                                        .font(.system(size: 11.5)).frame(minHeight: 24)
-                                }
-                                .buttonStyle(GhostButtonStyle())
-                                .help("跳到 \(time) 的转录")
-                            }
-                            CopyButton(text: { message.text }).font(.system(size: 11.5)).padding(.leading, Spacing.xs)
-                        }
-                        .padding(.vertical, Spacing.xxs)
-                    }
-                    .scrollIndicators(.hidden)
-                    .padding(.top, Spacing.xs)
+                    // Citations are links in the text itself, so there is no second row of them.
+                    MarkdownReading(text: message.text, citations: Set(citations), showSource: showSource)
+                    CopyButton(text: { message.text }).font(.system(size: 11.5)).padding(.top, Spacing.xs)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -166,24 +152,35 @@ struct StudyMessageView: View {
 
 struct MarkdownReading: View {
     let text: String
+    /// Timecodes that match a caption; `[mm:ss]` becomes a link to it.
+    var citations: Set<String> = []
+    var showSource: (String) -> Void = { _ in }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Spacing.s) {
+        VStack(alignment: .leading, spacing: Spacing.m) {
             ForEach(Array(MarkdownBlock.parse(text).enumerated()), id: \.offset) { _, block in
                 view(for: block)
             }
         }
         .font(.system(size: 15))
         .foregroundStyle(Palette.ink)
+        .tint(Palette.clayInk)
         .lineSpacing(5)
         .textSelection(.enabled)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .environment(\.openURL, OpenURLAction { url in
+            guard url.scheme == Self.sourceScheme else { return .systemAction }
+            showSource(String(url.absoluteString.dropFirst(Self.sourceScheme.count + 1)))
+            return .handled
+        })
     }
+
+    private func inline(_ text: String) -> AttributedString { Self.inline(text, citations: citations) }
 
     @ViewBuilder private func view(for block: MarkdownBlock) -> some View {
         switch block {
         case .heading(let level, let text):
-            Text(Self.inline(text))
+            Text(inline(text))
                 .font(level == 1 ? .display(21) : level == 2 ? .display(17) : .system(size: 14.5, weight: .semibold))
                 .padding(.top, level == 1 ? Spacing.xs : Spacing.s)
         case .bullet(let text, let depth):
@@ -191,40 +188,63 @@ struct MarkdownReading: View {
         case .numbered(let marker, let text, let depth):
             listItem(marker: marker, text: text, depth: depth)
         case .quote(let text):
-            Text(Self.inline(text)).foregroundStyle(Palette.ink2)
+            Text(inline(text)).foregroundStyle(Palette.ink2)
                 .padding(.leading, Spacing.m)
                 .overlay(alignment: .leading) { Capsule().fill(Palette.hairlineStrong).frame(width: 2) }
         case .table(let rows):
-            MarkdownTable(rows: rows)
+            MarkdownTable(rows: rows, inline: inline)
         case .rule:
             Divider().padding(.vertical, Spacing.xs)
         case .paragraph(let text):
-            Text(Self.inline(text)).fixedSize(horizontal: false, vertical: true)
+            Text(inline(text)).fixedSize(horizontal: false, vertical: true)
         }
     }
 
     private func listItem(marker: String, text: String, depth: Int) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: Spacing.s) {
             Text(marker).monospacedDigit().foregroundStyle(Palette.ink3)
-            Text(Self.inline(text)).fixedSize(horizontal: false, vertical: true)
+            Text(inline(text)).fixedSize(horizontal: false, vertical: true)
         }
         .padding(.leading, CGFloat(depth) * Spacing.l)
     }
 
-    static func inline(_ text: String) -> AttributedString {
-        (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(text)
+    static let sourceScheme = "clair-source"
+
+    /// Inline Markdown. A `[mm:ss]` citation becomes a small clay link into the transcript;
+    /// one that matches no caption stays as quiet text, so nothing looks clickable that is not.
+    static func inline(_ text: String, citations: Set<String> = []) -> AttributedString {
+        var result = (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(text)
+        let plain = String(result.characters)
+        let expression = try! NSRegularExpression(pattern: #"\[(\d{2,}:\d{2})\]"#)
+        for match in expression.matches(in: plain, range: NSRange(plain.startIndex..., in: plain)).reversed() {
+            guard let whole = Range(match.range, in: plain), let inner = Range(match.range(at: 1), in: plain) else { continue }
+            let time = String(plain[inner])
+            let lower = result.characters.index(result.startIndex, offsetBy: plain.distance(from: plain.startIndex, to: whole.lowerBound))
+            let upper = result.characters.index(lower, offsetBy: plain.distance(from: whole.lowerBound, to: whole.upperBound))
+            var marker = AttributedString(time)
+            marker.font = .system(size: 12.5, weight: .medium).monospacedDigit()
+            if citations.contains(time) {
+                marker.foregroundColor = Palette.clayInk
+                marker.link = URL(string: sourceScheme + ":" + time)
+            } else {
+                marker.foregroundColor = Palette.ink3
+            }
+            result.replaceSubrange(lower..<upper, with: marker)
+        }
+        return result
     }
 }
 
 struct MarkdownTable: View {
     let rows: [[String]]
+    var inline: (String) -> AttributedString = { MarkdownReading.inline($0) }
     var body: some View {
         let columns = rows.map(\.count).max() ?? 0
         Grid(alignment: .leading, horizontalSpacing: Spacing.l + Spacing.xs, verticalSpacing: Spacing.s + Spacing.xxs) {
             ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
                 GridRow {
                     ForEach(0..<columns, id: \.self) { column in
-                        Text(MarkdownReading.inline(column < row.count ? row[column] : ""))
+                        Text(inline(column < row.count ? row[column] : ""))
                             .font(index == 0 ? .system(size: 12.5, weight: .semibold) : column == 0 ? .french(14.5) : .system(size: 14))
                             .foregroundStyle(index == 0 ? Palette.ink2 : Palette.ink)
                             .fixedSize(horizontal: false, vertical: true)
@@ -236,7 +256,7 @@ struct MarkdownTable: View {
                 }
             }
         }
-        .padding(.vertical, Spacing.xs)
+        .padding(.vertical, Spacing.s)
     }
 }
 

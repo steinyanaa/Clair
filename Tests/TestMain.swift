@@ -202,6 +202,8 @@ struct TestMain {
             try check(!TranscriptRules.shouldMerge(previous: finished, next: next), "A finished sentence never absorbs the next one")
             var distant = next; distant.start = 12
             try check(!TranscriptRules.shouldMerge(previous: first, next: distant), "A long silence starts a new sentence")
+            try check(TranscriptRules.duration(103) == "01:43" && TranscriptRules.duration(4200) == "1:10:00"
+                      && TranscriptRules.duration(7325.9) == "2:02:05" && TranscriptRules.timecode(4200) == "70:00", "Class lengths over an hour")
             try check(TranscriptRules.translationHold("Si les taux", isFinal: false) == TranscriptRules.draftFragmentHold
                       && TranscriptRules.translationHold("Si les taux augmentent.", isFinal: false) == TranscriptRules.draftHold
                       && TranscriptRules.translationHold("Si les taux augmentent.", isFinal: true) == 0
@@ -238,6 +240,22 @@ struct TestMain {
             reviser.receive(SpeechEvent(start: 3, duration: 1.5, text: "et les ménages empruntent moins.", isFinal: true), token: reviser.captureID)
             try check(reviser.session.lines.count == 1 && reviser.session.lines[0].french == "Les taux augmentent et les ménages empruntent moins."
                       && !reviser.session.lines[0].chinese.isEmpty && reviser.isRevising(revisedID), "Merged line keeps its Chinese while re-translated")
+            // A segment re-timed when it is finalised keeps the translation of the same words.
+            let retimer = ClassController(workspace: WorkspaceConfiguration(projectRoot: mergeRoot.path))
+            retimer.newSession()
+            retimer.receive(SpeechEvent(start: 0, duration: 3, text: "nous devons vérifier les données", isFinal: false), token: retimer.captureID)
+            let draftID = retimer.session.lines[0].id
+            retimer.session.lines[0].chinese = "我们必须核实数据"
+            retimer.receive(SpeechEvent(start: 0.4, duration: 2.6, text: "Nous devons vérifier les données.", isFinal: true), token: retimer.captureID)
+            try check(retimer.session.lines.count == 1 && retimer.session.lines[0].id != draftID
+                      && retimer.session.lines[0].chinese == "我们必须核实数据" && !retimer.isPending(retimer.session.lines[0].id),
+                      "Re-timed line with the same words keeps its translation")
+            retimer.receive(SpeechEvent(start: 5, duration: 2, text: "Les prix montent", isFinal: false), token: retimer.captureID)
+            retimer.session.lines[1].chinese = "价格上涨"
+            retimer.receive(SpeechEvent(start: 5.3, duration: 2, text: "Les prix baissent.", isFinal: true), token: retimer.captureID)
+            try check(retimer.session.lines.count == 2 && retimer.session.lines[1].chinese.isEmpty && retimer.isPending(retimer.session.lines[1].id),
+                      "Re-timed line with different words is translated again")
+            retimer.shutdown()
             // Without the model or fallback the new translation fails: the earlier Chinese is withdrawn.
             let priorFallback = reviser.allowFallback
             reviser.allowFallback = false

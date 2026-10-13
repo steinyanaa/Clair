@@ -101,7 +101,7 @@ private struct ModelSettings: View {
             Section {
                 LabeledContent("状态") {
                     HStack(spacing: Spacing.xs) {
-                        Circle().fill(runtime.ready ? Color.green : Color.orange).frame(width: 7, height: 7).accessibilityHidden(true)
+                        Circle().fill(runtime.ready ? Palette.ready : Palette.clay).frame(width: 7, height: 7).accessibilityHidden(true)
                         Text(runtime.status).foregroundStyle(.secondary).lineLimit(2)
                     }
                 }

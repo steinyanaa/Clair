@@ -228,6 +228,21 @@ enum Motion {
 
 /// Inline notice above content: an error, or a state such as Recently Deleted.
 /// A raised card because it floats over scrolling captions; only the icon carries the tint.
+extension View {
+    /// Scrolling content fades out where it meets the toolbar and a floating bottom bar,
+    /// instead of being cut mid-line or showing through the bar. The mask follows the
+    /// safe area, so nothing is drawn beneath either bar.
+    func edgeFade(top: CGFloat = Spacing.xl, bottom: CGFloat = Spacing.xxl + Spacing.xs) -> some View {
+        mask {
+            VStack(spacing: 0) {
+                LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom).frame(height: top)
+                Color.black
+                LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom).frame(height: bottom)
+            }
+        }
+    }
+}
+
 struct Banner<Actions: View>: View {
     let symbol: String
     let message: String
